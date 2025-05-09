@@ -1,0 +1,35 @@
+C:\Users\allan\source\repos\Maze Engine\Maze Project\obj\Debug\net8.0\Maze Project.csproj.AssemblyReference.cache
+C:\Users\allan\source\repos\Maze Engine\Maze Project\obj\Debug\net8.0\Maze Project.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\allan\source\repos\Maze Engine\Maze Project\obj\Debug\net8.0\Maze Project.AssemblyInfoInputs.cache
+C:\Users\allan\source\repos\Maze Engine\Maze Project\obj\Debug\net8.0\Maze Project.AssemblyInfo.cs
+C:\Users\allan\source\repos\Maze Engine\Maze Project\obj\Debug\net8.0\Maze Project.csproj.CoreCompileInputs.cache
+C:\Users\allan\source\repos\Maze Engine\Maze Project\bin\Debug\net8.0\Maze Project.exe
+C:\Users\allan\source\repos\Maze Engine\Maze Project\bin\Debug\net8.0\Maze Project.deps.json
+C:\Users\allan\source\repos\Maze Engine\Maze Project\bin\Debug\net8.0\Maze Project.runtimeconfig.json
+C:\Users\allan\source\repos\Maze Engine\Maze Project\bin\Debug\net8.0\Maze Project.dll
+C:\Users\allan\source\repos\Maze Engine\Maze Project\bin\Debug\net8.0\Maze Project.pdb
+C:\Users\allan\source\repos\Maze Engine\Maze Project\bin\Debug\net8.0\OpenTK.Audio.OpenAL.dll
+C:\Users\allan\source\repos\Maze Engine\Maze Project\bin\Debug\net8.0\OpenTK.Compute.dll
+C:\Users\allan\source\repos\Maze Engine\Maze Project\bin\Debug\net8.0\OpenTK.Core.dll
+C:\Users\allan\source\repos\Maze Engine\Maze Project\bin\Debug\net8.0\OpenTK.Graphics.dll
+C:\Users\allan\source\repos\Maze Engine\Maze Project\bin\Debug\net8.0\OpenTK.Input.dll
+C:\Users\allan\source\repos\Maze Engine\Maze Project\bin\Debug\net8.0\OpenTK.Mathematics.dll
+C:\Users\allan\source\repos\Maze Engine\Maze Project\bin\Debug\net8.0\OpenTK.Windowing.Common.dll
+C:\Users\allan\source\repos\Maze Engine\Maze Project\bin\Debug\net8.0\OpenTK.Windowing.Desktop.dll
+C:\Users\allan\source\repos\Maze Engine\Maze Project\bin\Debug\net8.0\OpenTK.Windowing.GraphicsLibraryFramework.dll
+C:\Users\allan\source\repos\Maze Engine\Maze Project\bin\Debug\net8.0\runtimes\linux-x64\native\libglfw-wayland.so.3.3
+C:\Users\allan\source\repos\Maze Engine\Maze Project\bin\Debug\net8.0\runtimes\linux-x64\native\libglfw.so.3.3
+C:\Users\allan\source\repos\Maze Engine\Maze Project\bin\Debug\net8.0\runtimes\osx-arm64\native\libglfw.3.dylib
+C:\Users\allan\source\repos\Maze Engine\Maze Project\bin\Debug\net8.0\runtimes\osx-x64\native\libglfw.3.dylib
+C:\Users\allan\source\repos\Maze Engine\Maze Project\bin\Debug\net8.0\runtimes\win-x64\native\glfw3.dll
+C:\Users\allan\source\repos\Maze Engine\Maze Project\bin\Debug\net8.0\runtimes\win-x86\native\glfw3.dll
+C:\Users\allan\source\repos\Maze Engine\Maze Project\obj\Debug\net8.0\Maze Pro.C6198DC2.Up2Date
+C:\Users\allan\source\repos\Maze Engine\Maze Project\obj\Debug\net8.0\Maze Project.dll
+C:\Users\allan\source\repos\Maze Engine\Maze Project\obj\Debug\net8.0\refint\Maze Project.dll
+C:\Users\allan\source\repos\Maze Engine\Maze Project\obj\Debug\net8.0\Maze Project.pdb
+C:\Users\allan\source\repos\Maze Engine\Maze Project\obj\Debug\net8.0\Maze Project.genruntimeconfig.cache
+C:\Users\allan\source\repos\Maze Engine\Maze Project\obj\Debug\net8.0\ref\Maze Project.dll
+C:\Users\allan\source\repos\Maze Engine\Maze Project\bin\Debug\net8.0\Microsoft.Win32.SystemEvents.dll
+C:\Users\allan\source\repos\Maze Engine\Maze Project\bin\Debug\net8.0\System.Drawing.Common.dll
+C:\Users\allan\source\repos\Maze Engine\Maze Project\bin\Debug\net8.0\System.Private.Windows.Core.dll
+C:\Users\allan\source\repos\Maze Engine\Maze Project\bin\Debug\net8.0\runtimes\win\lib\net8.0\Microsoft.Win32.SystemEvents.dll
