@@ -88,7 +88,7 @@ namespace MazeEngine.Blocks
         public World()
         {
             _perlinNoise = new PerlinNoise(seed: seed, octaves: octaves, persistence: persistence, frequency: frequency, amplitude: amplitude);
-            _perlinWorm = new PerlinWorm(this, seed: seed, wormLength: 200, wormStepSize: 5, wormRadius: 5);
+            //_perlinWorm = new PerlinWorm(this, seed: seed, wormLength: 200, wormStepSize: 5, wormRadius: 5);
         }
 
         private void PreGenerateCaverns()
@@ -338,61 +338,59 @@ namespace MazeEngine.Blocks
         {
             var regionsToUnload = new Stack<Vector3i>();
             var playerRegion = RegionInWorld(PlayerController.Position.ToVector3i());
-            var renderDistanceSquared = RenderDistance * RenderDistance;
+            int renderDistSq = RenderDistance * RenderDistance;
 
-            foreach (var region in _loadedRegions.ToList()) // ToList para evitar modificações durante a iteração
+            // identifica quais regiões devem sair da memória
+            foreach (var region in _loadedRegions.ToList())
             {
                 var v = region - playerRegion;
-                var distanceSquared = v.X * v.X + v.Z * v.Z; // Apenas X e Z para distância
+                int distSq = v.X * v.X + v.Z * v.Z;
 
-                // Se "unloadAll" for true, descarregamos tudo
-                // Caso contrário, descarregamos só as regiões fora do raio esférico no XZ
-                if (!unloadAll && distanceSquared <= renderDistanceSquared)
+                if (!unloadAll && distSq <= renderDistSq)
                     continue;
 
                 regionsToUnload.Push(region);
+            }
+
+            // para cada uma, agenda salvamento e remoção
+            while (regionsToUnload.Count > 0)
+            {
+                var region = regionsToUnload.Pop();
+
+                // **ESSENCIAL**: permita nova geração quando o player voltar
+                _generatedRegions.Remove(region);
+
+                // agenda salvar no disco e depois remover de loadedChunks
                 ThreadPool.QueueUserWorkItem(_ =>
                 {
-                    SaveRegion(region);
+                    WorldSerializer.SaveRegion(this, region);
                     lock (_regionsReadyToRemove)
                         _regionsReadyToRemove.Enqueue(region);
                 });
+
+                _loadedRegions.Remove(region);
             }
 
-            // Remove da lista principal
-            while (regionsToUnload.Count > 0)
-                _loadedRegions.Remove(regionsToUnload.Pop());
-
-            // Efetiva a remoção dos chunks
+            // efetiva a remoção dos chunks em seguida
             while (_regionsReadyToRemove.Count > 0)
             {
-                Vector3i region;
-                lock (_regionsReadyToRemove)
-                    region = _regionsReadyToRemove.Dequeue();
-
+                var region = _regionsReadyToRemove.Dequeue();
                 var chunkMinPos = ChunkInWorld(region * RegionSize);
 
-                for (var x = 0; x < ChunksPerRegion; x++)
-                {
-                    for (var y = 0; y < ChunksPerRegion; y++)
-                    {
-                        for (var z = 0; z < ChunksPerRegion; z++)
+                for (int cx = 0; cx < ChunksPerRegion; cx++)
+                    for (int cy = 0; cy < ChunksPerRegion; cy++)
+                        for (int cz = 0; cz < ChunksPerRegion; cz++)
                         {
-                            var key = chunkMinPos + new Vector3i(x, y, z);
-                            if (!loadedChunks.TryGetValue(key, out Chunk chunk))
+                            var key = chunkMinPos + new Vector3i(cx, cy, cz);
+                            if (!loadedChunks.TryGetValue(key, out var chunk))
                                 continue;
 
                             chunk.Dispose();
                             loadedChunks.Remove(key);
 
-                            // Remover da fila de atualizações se estiver presente
-                            lock (_queuedChunksHpSet)
-                                _queuedChunksHpSet.Remove(key);
-                            lock (_queuedChunksLpSet)
-                                _queuedChunksLpSet.Remove(key);
+                            lock (_queuedChunksHpSet) _queuedChunksHpSet.Remove(key);
+                            lock (_queuedChunksLpSet) _queuedChunksLpSet.Remove(key);
                         }
-                    }
-                }
             }
         }
 
@@ -406,87 +404,196 @@ namespace MazeEngine.Blocks
         /// <param name="region">Posição da região a ser carregada.</param>
         /// <param name="worldMin">Posição mínima do mundo da região.</param>
         /// <param name="worldMax">Posição máxima do mundo da região.</param>
+        // World.cs (dentro da classe World)
+
+        /// <summary>
+        /// Gera proceduralmente cada chunk de uma região (2×2×2 chunks),
+        /// garantindo que não haja área sem blocos definidos.
+        /// </summary>
         private void LoadRegion(ChunkCache cache, Vector3i region, Vector3i worldMin, Vector3i worldMax)
         {
-            // Verifica se a região já foi gerada
-            if (_generatedRegions.Contains(region))
-                return;
-
-            // Geração procedural usando Perlin Noise (terreno)
-            for (var x = worldMin.X; x <= worldMax.X; x++)
+            // 1) se o disco já tem a região, carrega e sai
+            if (WorldSerializer.LoadRegion(cache, region))
             {
-                for (var z = worldMin.Z; z <= worldMax.Z; z++)
-                {
-                    float noiseValue = _perlinNoise.GetNoise(x, z);
-                    int height = (int)(noiseValue * 32) + 32; // Altura varia de 32 a 64
-
-                    for (var y = worldMin.Y; y <= height; y++)
-                    {
-                        if (y == height)
-                        {
-                            cache.SetBlockWithoutUpdate(x, y, z, 2); // Grama
-                        }
-                        else if (y >= height - 3 && y >= worldMin.Y)
-                        {
-                            cache.SetBlockWithoutUpdate(x, y, z, 3); // Terra
-                        }
-                        else
-                        {
-                            cache.SetBlockWithoutUpdate(x, y, z, 1); // Pedra
-                        }
-                    }
-                }
+                _generatedRegions.Add(region);
+                lock (_regionsReadyToAdd)
+                    _regionsReadyToAdd.Enqueue(cache);
+                return;
             }
 
-            // Geração de cavernas usando Perlin Worm
-            var startPosition = new Vector3i(worldMin.X + RegionSize / 2, worldMin.Y + RegionSize / 2, worldMin.Z + RegionSize / 2);
-            _perlinWorm.Generate(startPosition);
-
-            // Marca a região como gerada
+            // 2) marca como gerada
             _generatedRegions.Add(region);
 
-            // Coloca na fila para efetivamente adicionar
+            // 3) gere chunk por chunk
+            Vector3i chunkRegionMin = new Vector3i(
+                region.X * ChunksPerRegion,
+                region.Y * ChunksPerRegion,
+                region.Z * ChunksPerRegion
+            );
+
+            for (int cx = 0; cx < ChunksPerRegion; cx++)
+                for (int cy = 0; cy < ChunksPerRegion; cy++)
+                    for (int cz = 0; cz < ChunksPerRegion; cz++)
+                    {
+                        var chunkPos = chunkRegionMin + new Vector3i(cx, cy, cz);
+                        var chunkCache = new CachedChunk(this, chunkPos);
+
+                        int baseX = chunkPos.X * Chunk.Size;
+                        int baseY = chunkPos.Y * Chunk.Size;
+                        int baseZ = chunkPos.Z * Chunk.Size;
+
+                        for (int lx = 0; lx < Chunk.Size; lx++)
+                            for (int lz = 0; lz < Chunk.Size; lz++)
+                            {
+                                float noiseVal = _perlinNoise.GetNoise(baseX + lx, baseZ + lz);
+                                int h = (int)(noiseVal * 32) + 32;
+
+                                for (int ly = 0; ly < Chunk.Size; ly++)
+                                {
+                                    int wy = baseY + ly;
+                                    uint id;
+
+                                    if (wy > h)
+                                        id = 0;      // ar
+                                    else if (wy == h)
+                                        id = 2;      // grama
+                                    else if (wy >= h - 3)
+                                        id = 3;      // terra
+                                    else
+                                        id = 1;      // pedra
+
+                                    cache.SetBlockWithoutUpdate(
+                                        baseX + lx,
+                                        wy,
+                                        baseZ + lz,
+                                        id
+                                    );
+                                }
+                            }
+
+                        // 4) safe-add para evitar “key already added”
+                        try
+                        {
+                            cache.AddChunk(chunkCache);
+                        }
+                        catch (ArgumentException)
+                        {
+                            // ok, já tinha sido adicionado
+                        }
+                    }
+
+            // 5) enfileira tudo para entrar no mundo
             lock (_regionsReadyToAdd)
                 _regionsReadyToAdd.Enqueue(cache);
         }
 
+
         private void UpdateChunks()
         {
-            // Primeiro, subimos para GPU os chunks que já estão prontos
-            UploadChunkQueue(_queuedReadyToUploadHp, 6);
-            UploadChunkQueue(_queuedReadyToUploadLp, MaxChunkUploads);
+            // 1) Enumera e gera toda a geometria pendente, HP + LP
+            List<Chunk> toGenerate = new List<Chunk>();
+            lock (_queuedChunkUpdatesHp)
+            {
+                while (_queuedChunkUpdatesHp.Count > 0)
+                    toGenerate.Add(_queuedChunkUpdatesHp.Dequeue());
+            }
+            lock (_queuedChunkUpdatesLp)
+            {
+                while (_queuedChunkUpdatesLp.Count > 0)
+                    toGenerate.Add(_queuedChunkUpdatesLp.Dequeue());
+            }
 
-            // Em seguida, atualizamos as filas de update (gera geometria)
-            UpdateChunkQueue(_queuedChunkUpdatesHp, _queuedReadyToUploadHp, _queuedChunksHpSet, isHighPriority: true);
-            UpdateChunkQueue(_queuedChunkUpdatesLp, _queuedReadyToUploadLp, _queuedChunksLpSet, isHighPriority: false);
+            foreach (var chunk in toGenerate)
+            {
+                try
+                {
+                    // Gera a VAO completa
+                    chunk.Update();
+                    // Imediatamente envia para upload
+                    _queuedReadyToUploadHp.Enqueue(chunk);
+                }
+                catch (Exception ex)
+                {
+                    Logger.Error($"Erro ao gerar chunk {chunk.Position}: {ex.Message}");
+                }
+            }
 
-            // E então, adicionamos (quando disponível) as regiões que acabaram de ser carregadas
+            // 2) Agora sobe tudo o que estiver pronto (HP + LP também)
+            lock (_queuedReadyToUploadHp)
+            {
+                while (_queuedReadyToUploadHp.Count > 0)
+                {
+                    var chunk = _queuedReadyToUploadHp.Dequeue();
+                    try
+                    {
+                        chunk.Upload();
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.Error($"Erro ao subir chunk {chunk.Position}: {ex.Message}");
+                    }
+                }
+            }
+            lock (_queuedReadyToUploadLp)
+            {
+                while (_queuedReadyToUploadLp.Count > 0)
+                {
+                    var chunk = _queuedReadyToUploadLp.Dequeue();
+                    try
+                    {
+                        chunk.Upload();
+                    }
+                    catch { }
+                }
+            }
+
+            // 3) Adiciona regiões novas
             lock (_regionsReadyToAdd)
             {
                 while (_regionsReadyToAdd.Count > 0)
-                {
                     _regionsReadyToAdd.Dequeue().AddToWorldAndUpdate();
-                }
             }
+        }
+
+
+        /// <summary>
+        /// Envia imediatamente todos os chunks prontos (alta e baixa prioridade)
+        /// para a GPU, garantindo que nada fique esperando.
+        /// </summary>
+        public void ForceUploadAllPending()
+        {
+            // sobe tudo que estiver pronto, sem limites
+            UploadChunkQueue(_queuedReadyToUploadHp, int.MaxValue);
+            UploadChunkQueue(_queuedReadyToUploadLp, int.MaxValue);
         }
 
         private void UploadChunkQueue(Queue<Chunk> queue, int max)
         {
             // Sobe os chunks já atualizados (geom pronta) para a GPU
-            for (var i = 0; i < max && queue.Count > 0; i++)
+            for (int i = 0; i < max && queue.Count > 0; i++)
             {
                 var chunk = queue.Dequeue();
+                if (chunk == null)
+                    continue;      // descarta eventuais nulos
                 chunk.Upload();
             }
         }
 
-        private void UpdateChunkQueue(Queue<Chunk> updateQueue, Queue<Chunk> uploadQueue, HashSet<Vector3i> queuedSet, bool isHighPriority)
+        private void UpdateChunkQueue(
+     Queue<Chunk> updateQueue,
+     Queue<Chunk> uploadQueue,
+     HashSet<Vector3i> queuedSet,
+     bool isHighPriority)
         {
             while (updateQueue.Count > 0 && _chunkThreadsCount < MaxAsyncChunkUpdates)
             {
                 var chunk = updateQueue.Dequeue();
-                queuedSet.Remove(chunk.Position); // Remove do HashSet ao iniciar o processamento
-                Interlocked.Increment(ref _chunkThreadsCount); // Incrementa antes
+                queuedSet.Remove(chunk?.Position ?? default);
+
+                if (chunk == null)
+                    continue;   // descarta nulos aqui também
+
+                Interlocked.Increment(ref _chunkThreadsCount);
 
                 ThreadPool.QueueUserWorkItem(state =>
                 {
@@ -507,7 +614,7 @@ namespace MazeEngine.Blocks
                     }
                     finally
                     {
-                        Interlocked.Decrement(ref _chunkThreadsCount); // Decrementa no final
+                        Interlocked.Decrement(ref _chunkThreadsCount);
                     }
                 });
             }

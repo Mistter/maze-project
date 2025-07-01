@@ -72,13 +72,14 @@ namespace MazeEngine.Blocks
 
             foreach (var entry in _chunks)
             {
-                World.QueueChunkUpdate(entry.Key, true);
-                World.QueueChunkUpdate(entry.Key + new Vector3i(-1, 0, 0), true);
-                World.QueueChunkUpdate(entry.Key + new Vector3i(+1, 0, 0), true);
-                World.QueueChunkUpdate(entry.Key + new Vector3i(0, -1, 0), true);
-                World.QueueChunkUpdate(entry.Key + new Vector3i(0, +1, 0), true);
-                World.QueueChunkUpdate(entry.Key + new Vector3i(0, 0, -1), true);
-                World.QueueChunkUpdate(entry.Key + new Vector3i(0, 0, +1), true);
+                var p = entry.Key;
+                World.QueueChunkUpdate(p, false);
+                World.QueueChunkUpdate(p + new Vector3i(-1, 0, 0), false);
+                World.QueueChunkUpdate(p + new Vector3i(+1, 0, 0), false);
+                World.QueueChunkUpdate(p + new Vector3i(0, -1, 0), false);
+                World.QueueChunkUpdate(p + new Vector3i(0, +1, 0), false);
+                World.QueueChunkUpdate(p + new Vector3i(0, 0, -1), false);
+                World.QueueChunkUpdate(p + new Vector3i(0, 0, +1), false);
             }
         }
     }

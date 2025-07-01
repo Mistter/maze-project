@@ -33,3 +33,4 @@ C:\Users\allan\source\repos\Maze Engine\Maze Project\obj\Debug\net8.0\refint\Maz
 C:\Users\allan\source\repos\Maze Engine\Maze Project\obj\Debug\net8.0\MazeEngine.pdb
 C:\Users\allan\source\repos\Maze Engine\Maze Project\obj\Debug\net8.0\MazeEngine.genruntimeconfig.cache
 C:\Users\allan\source\repos\Maze Engine\Maze Project\obj\Debug\net8.0\ref\MazeEngine.dll
+C:\Users\allan\source\repos\Maze Engine\Maze Project\obj\Debug\net8.0\MazeEngine.sourcelink.json

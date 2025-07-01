@@ -129,5 +129,14 @@ namespace MazeEngine.Blocks
                 }
             }
         }
+
+        /// <summary>
+        /// Retorna true se esse chunk nunca fez Upload() (logo, está vazio).
+        /// </summary>
+        public bool IsEmpty()
+        {
+            // UploadedCount vem de VertexArrayObject
+            return _vao.UploadedCount == 0;
+        }
     }
 }
