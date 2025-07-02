@@ -1,23 +1,25 @@
-﻿using OpenTK.Mathematics;
+﻿// VertexArrayObject.cs
+
+using OpenTK.Mathematics;
 using OpenTK.Graphics.OpenGL4;
+using System;
+using System.Collections.Generic;
 
 namespace MazeEngine.Graphics
 {
     internal class VertexArrayObject : IDisposable
     {
         private readonly int _vaoId;
-        private readonly int[] _bufferIds = new int[2]; // Precisamos de 2 VBOs (posições e texCoords)
-        private readonly int _indicesId;                 // 1 IBO (buffer de índices)
-
-        private int _count;  // Quantidade de índices
+        private readonly int[] _bufferIds = new int[2];
+        private readonly int _indicesId;
 
         private List<Vector3> _positions;
         private List<Vector3> _texCoords;
         private List<uint> _indices;
 
         public int UploadedCount;
-        public int VertexCount => (_positions?.Count) ?? 0;
-        public int IndicesCount => (_indices?.Count) ?? 0;
+        public int VertexCount => _positions?.Count ?? 0;
+        public int IndicesCount => _indices?.Count ?? 0;
 
         public VertexArrayObject()
         {
@@ -30,9 +32,10 @@ namespace MazeEngine.Graphics
         {
             if (_positions == null)
             {
-                _positions = new List<Vector3>(1024);
-                _texCoords = new List<Vector3>(1024);
-                _indices = new List<uint>(1024);
+                // pré-aloca para evitar múltiplos redimensionamentos
+                _positions = new List<Vector3>(4096);
+                _texCoords = new List<Vector3>(4096);
+                _indices = new List<uint>(8192);
             }
 
             _positions.Add(position);
@@ -46,56 +49,41 @@ namespace MazeEngine.Graphics
 
         public void Upload()
         {
-            if (IndicesCount <= 0)
+            if (_indices == null || _indices.Count == 0)
                 return;
 
             GL.BindVertexArray(_vaoId);
 
-            if (UploadedCount == 0)
-            {
-                // Posições
-                GL.BindBuffer(BufferTarget.ArrayBuffer, _bufferIds[0]);
-                GL.BufferData(BufferTarget.ArrayBuffer,
-                              _positions.Count * Vector3.SizeInBytes,
-                              _positions.ToArray(),
-                              BufferUsageHint.StaticDraw);
+            // posições
+            GL.BindBuffer(BufferTarget.ArrayBuffer, _bufferIds[0]);
+            GL.BufferData(
+                BufferTarget.ArrayBuffer,
+                _positions.Count * Vector3.SizeInBytes,
+                _positions.ToArray(),
+                BufferUsageHint.StaticDraw
+            );
+            GL.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, 0, 0);
+            GL.EnableVertexAttribArray(0);
 
-                GL.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, 0, 0);
-                GL.EnableVertexAttribArray(0);
+            // texCoords
+            GL.BindBuffer(BufferTarget.ArrayBuffer, _bufferIds[1]);
+            GL.BufferData(
+                BufferTarget.ArrayBuffer,
+                _texCoords.Count * Vector3.SizeInBytes,
+                _texCoords.ToArray(),
+                BufferUsageHint.StaticDraw
+            );
+            GL.VertexAttribPointer(1, 3, VertexAttribPointerType.Float, false, 0, 0);
+            GL.EnableVertexAttribArray(1);
 
-                // TexCoords
-                GL.BindBuffer(BufferTarget.ArrayBuffer, _bufferIds[1]);
-                GL.BufferData(BufferTarget.ArrayBuffer,
-                              _texCoords.Count * Vector3.SizeInBytes,
-                              _texCoords.ToArray(),
-                              BufferUsageHint.StaticDraw);
-
-                GL.VertexAttribPointer(1, 3, VertexAttribPointerType.Float, false, 0, 0);
-                GL.EnableVertexAttribArray(1);
-            }
-            else
-            {
-                // Atualiza buffer de posições
-                GL.BindBuffer(BufferTarget.ArrayBuffer, _bufferIds[0]);
-                GL.BufferData(BufferTarget.ArrayBuffer,
-                              _positions.Count * Vector3.SizeInBytes,
-                              _positions.ToArray(),
-                              BufferUsageHint.StaticDraw);
-
-                // Atualiza buffer de texCoords
-                GL.BindBuffer(BufferTarget.ArrayBuffer, _bufferIds[1]);
-                GL.BufferData(BufferTarget.ArrayBuffer,
-                              _texCoords.Count * Vector3.SizeInBytes,
-                              _texCoords.ToArray(),
-                              BufferUsageHint.StaticDraw);
-            }
-
-            // Indices
+            // indices
             GL.BindBuffer(BufferTarget.ElementArrayBuffer, _indicesId);
-            GL.BufferData(BufferTarget.ElementArrayBuffer,
-                          _indices.Count * sizeof(uint),
-                          _indices.ToArray(),
-                          BufferUsageHint.StaticDraw);
+            GL.BufferData(
+                BufferTarget.ElementArrayBuffer,
+                _indices.Count * sizeof(uint),
+                _indices.ToArray(),
+                BufferUsageHint.StaticDraw
+            );
 
             UploadedCount = _indices.Count;
 
@@ -104,15 +92,17 @@ namespace MazeEngine.Graphics
 
         public void Clear()
         {
-            _positions = null;
-            _texCoords = null;
-            _indices = null;
+            if (_positions != null)
+            {
+                _positions.Clear();
+                _texCoords.Clear();
+                _indices.Clear();
+            }
         }
 
         public void Draw()
         {
             if (UploadedCount <= 0) return;
-
             GL.BindVertexArray(_vaoId);
             GL.DrawElements(PrimitiveType.Triangles, UploadedCount, DrawElementsType.UnsignedInt, 0);
             GL.BindVertexArray(0);
