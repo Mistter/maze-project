@@ -96,8 +96,16 @@ namespace MazeEngine
 
         private static void OnResize(ResizeEventArgs e)
         {
+            // Ajusta viewport e projeção
             GL.Viewport(0, 0, e.Width, e.Height);
             UpdateProjection(e.Width, e.Height);
+
+            // Recria o quad de UI com as novas dimensões
+            if (_quadVao != 0)
+            {
+                GL.DeleteVertexArray(_quadVao);
+            }
+            CreateQuad();
         }
 
         private static void UpdateProjection(int width, int height)
@@ -185,7 +193,10 @@ namespace MazeEngine
         private static void RenderPauseMenu()
         {
             _shader.Bind();
+
+            // Desativa DepthTest e Culling para garantir o quad visível
             GL.Disable(EnableCap.DepthTest);
+            GL.Disable(EnableCap.CullFace);
 
             var ortho = Matrix4.CreateOrthographicOffCenter(
                 0, _window.Size.X,
@@ -203,16 +214,20 @@ namespace MazeEngine
                 0
             );
 
+            // Restaura estados
             GL.Enable(EnableCap.DepthTest);
+            GL.Enable(EnableCap.CullFace);
         }
 
         private static void CreateQuad()
         {
+            float w = _window.Size.X, h = _window.Size.Y;
             float[] vertices = {
-                0f, _window.Size.Y, 0f,  0f,0f,0f,  0f,0f,1f,
-                0f, 0f,            0f,  0f,1f,0f,  0f,0f,1f,
-                _window.Size.X, 0f,  0f,  1f,1f,0f,  0f,0f,1f,
-                _window.Size.X, _window.Size.Y, 0f, 1f,0f,0f,  0f,0f,1f
+                //  X,   Y, Z,    U,   V, Layer,    NX, NY, NZ
+                   0f,  h, 0f,   0f,  1f,   0f,      0f, 0f, 1f,
+                   0f,  0f, 0f,   0f,  0f,   0f,      0f, 0f, 1f,
+                   w,   0f, 0f,   1f,  0f,   0f,      0f, 0f, 1f,
+                   w,   h,  0f,   1f,  1f,   0f,      0f, 0f, 1f
             };
             uint[] indices = { 0, 1, 2, 0, 2, 3 };
 
