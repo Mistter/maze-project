@@ -1,4 +1,5 @@
-﻿using OpenTK.Mathematics;
+﻿// Program.cs
+using OpenTK.Mathematics;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Windowing.Common;
 using OpenTK.Windowing.Desktop;
@@ -24,6 +25,11 @@ namespace MazeEngine
         private static bool _debugMode = false;
         private static bool _logConsoleOpen = false;
 
+        // Global mesh
+        private static VertexArrayObject _globalVao;
+        private static bool _meshDirty = true;
+        private static int _lastLoadedChunks = 0;
+
         private static int _quadVao;
         private static Vector3 _lightDirection = new Vector3(-0.2f, -1.0f, -0.3f);
 
@@ -36,11 +42,11 @@ namespace MazeEngine
             };
 
             _window = new GameWindow(GameWindowSettings.Default, nativeWindowSettings);
-            _window.VSync = VSyncMode.On;
+            _window.VSync = VSyncMode.Off;
 
             _world = new World
             {
-                RenderDistance = 3
+                RenderDistance = 8
             };
 
             PlayerController.Initialize(new Camera(new Vector3(0f, 5f, 10f)));
@@ -97,7 +103,6 @@ namespace MazeEngine
         private static void UpdateProjection(int width, int height)
         {
             float aspect = width / (float)height;
-            // Sem limite prático de far plane: um valor muito grande
             float farClip = 1_000_000f;
             _projection = Matrix4.CreatePerspectiveFieldOfView(
                 MathHelper.PiOver2,
@@ -165,7 +170,6 @@ namespace MazeEngine
             var view = PlayerController.GetViewMatrix();
             var proj = _projection;
 
-            // Remove culling manual por distância: desenha TODOS os chunks carregados
             foreach (var entry in _world.loadedChunks)
             {
                 var model = Matrix4.CreateTranslation(

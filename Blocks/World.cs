@@ -1,4 +1,5 @@
-﻿using MazeEngine.Entities;
+﻿// World.cs
+using MazeEngine.Entities;
 using MazeEngine.Utils;
 using OpenTK.Mathematics;
 using Vector3i = MazeEngine.Utils.Vector3i;
@@ -7,6 +8,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading;
+using OpenTK.Windowing.GraphicsLibraryFramework;
 
 namespace MazeEngine.Blocks
 {
@@ -16,7 +18,11 @@ namespace MazeEngine.Blocks
         public const int RegionSize = 2 * Chunk.Size;      // 32 blocos
         public const int ChunksPerRegion = RegionSize / Chunk.Size; // 2 chunks/região
 
-        public static readonly int MaxAsyncChunkUpdates = Environment.ProcessorCount * 4;
+        public static readonly int MaxAsyncChunkUpdates = Environment.ProcessorCount * 8;
+
+        // Locks para proteger acesso concorrente
+        private readonly object _lockLoadedRegions = new object();
+        private readonly object _lockGeneratedRegions = new object();
 
         public static Vector3i RegionInWorld(Vector3i v) => RegionInWorld(v.X, v.Y, v.Z);
         public static Vector3i RegionInWorld(int x, int y, int z) => new Vector3i(
@@ -47,9 +53,9 @@ namespace MazeEngine.Blocks
         public int ChunkThreadsCount => _chunkThreadsCount;
 
         private readonly HashSet<Vector3i> _loadedRegions = new HashSet<Vector3i>();
+        private readonly HashSet<Vector3i> _generatedRegions = new HashSet<Vector3i>();
         private readonly HashSet<Vector3i> _queuedChunksHpSet = new HashSet<Vector3i>();
         private readonly HashSet<Vector3i> _queuedChunksLpSet = new HashSet<Vector3i>();
-        private readonly HashSet<Vector3i> _generatedRegions = new HashSet<Vector3i>();
 
         private readonly Queue<Chunk> _queuedChunkUpdatesHp = new Queue<Chunk>();
         private readonly Queue<Chunk> _queuedChunkUpdatesLp = new Queue<Chunk>();
@@ -61,10 +67,10 @@ namespace MazeEngine.Blocks
 
         private int _chunkThreadsCount;
         private bool _unloaded;
-        public int RenderDistance { get; set; } = 16;    // raio 3
+        public int RenderDistance { get; set; } = 16;
 
-        private const int MaxYRegions = 256 / RegionSize;  // 8
-        private readonly int VerticalRegionDistance = 2;             // 2 acima/2 abaixo
+        private const int MaxYRegions = 256 / RegionSize;
+        private readonly int VerticalRegionDistance = 2;
 
         private readonly PerlinNoise _perlinNoise;
         private readonly PerlinWorm _perlinWorm;
@@ -75,8 +81,8 @@ namespace MazeEngine.Blocks
         private const float frequency = 0.01f;
         private const float amplitude = 1.0f;
 
-        // **Throttle**: só 1 chunk por frame
-        private const int MaxChunkUpdatesPerFrame = 1;
+        // Throttle aumentado para maior throughput
+        private const int MaxChunkUpdatesPerFrame = 4;
 
         public World()
         {
@@ -130,11 +136,19 @@ namespace MazeEngine.Blocks
         }
 
         public uint GetBlock(Vector3i bp) => GetBlock(bp.X, bp.Y, bp.Z);
+
+        /// <summary>
+        /// Retorna o ID do bloco. Se o chunk não existir, devolve 1 (stone) para bloquear face.
+        /// </summary>
         public uint GetBlock(int x, int y, int z)
         {
             var cp = ChunkInWorld(x, y, z);
             var bc = BlockInChunk(x, y, z);
-            return loadedChunks.TryGetValue(cp, out var c) ? c.GetBlock(bc.X, bc.Y, bc.Z) : 0;
+            if (!loadedChunks.TryGetValue(cp, out var c))
+            {
+                return 1;
+            }
+            return c.GetBlock(bc.X, bc.Y, bc.Z);
         }
 
         public void QueueChunkUpdate(Vector3i pos, bool lp)
@@ -230,8 +244,13 @@ namespace MazeEngine.Blocks
                     for (int y = minY; y <= maxY; y++)
                     {
                         var region = new Vector3i(pr.X + x, y, pr.Z + z);
-                        if (_loadedRegions.Contains(region)) continue;
-                        _loadedRegions.Add(region);
+                        bool already;
+                        lock (_lockLoadedRegions)
+                        {
+                            already = _loadedRegions.Contains(region);
+                            if (!already) _loadedRegions.Add(region);
+                        }
+                        if (already) continue;
                         _pendingRegions.Enqueue(region);
                     }
                 }
@@ -239,22 +258,26 @@ namespace MazeEngine.Blocks
 
         private void ProcessPendingRegions()
         {
-            if (_pendingRegions.Count == 0) return;
-            var reg = _pendingRegions.Dequeue();
-            ThreadPool.QueueUserWorkItem(_ =>
+            int dispatched = 0;
+            while (dispatched < MaxChunkUpdatesPerFrame && _pendingRegions.Count > 0)
             {
-                try
+                var reg = _pendingRegions.Dequeue();
+                ThreadPool.QueueUserWorkItem(_ =>
                 {
-                    var cache = new ChunkCache(this);
-                    var wm = reg * RegionSize;
-                    var wM = wm + new Vector3i(RegionSize - 1, RegionSize - 1, RegionSize - 1);
-                    LoadRegion(cache, reg, wm, wM);
-                }
-                catch (Exception ex)
-                {
-                    Logger.Error($"Erro ao gerar região {reg}: {ex.Message}");
-                }
-            });
+                    try
+                    {
+                        var cache = new ChunkCache(this);
+                        var wm = reg * RegionSize;
+                        var wM = wm + new Vector3i(RegionSize - 1, RegionSize - 1, RegionSize - 1);
+                        LoadRegion(cache, reg, wm, wM);
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.Error($"Erro ao gerar região {reg}: {ex.Message}");
+                    }
+                });
+                dispatched++;
+            }
         }
 
         private void UnloadChunks(bool unloadAll)
@@ -263,7 +286,10 @@ namespace MazeEngine.Blocks
             var pr = RegionInWorld(PlayerController.Position.ToVector3i());
             int r2 = RenderDistance * RenderDistance;
 
-            foreach (var r in _loadedRegions.ToList())
+            List<Vector3i> snapshot;
+            lock (_lockLoadedRegions) snapshot = _loadedRegions.ToList();
+
+            foreach (var r in snapshot)
             {
                 var v = r - pr;
                 int d2 = v.X * v.X + v.Z * v.Z;
@@ -274,13 +300,13 @@ namespace MazeEngine.Blocks
             while (stack.Count > 0)
             {
                 var rg = stack.Pop();
-                _generatedRegions.Remove(rg);
+                lock (_lockGeneratedRegions) { _generatedRegions.Remove(rg); }
                 ThreadPool.QueueUserWorkItem(_ =>
                 {
                     WorldSerializer.SaveRegion(this, rg);
                     lock (_regionsReadyToRemove) _regionsReadyToRemove.Enqueue(rg);
                 });
-                _loadedRegions.Remove(rg);
+                lock (_lockLoadedRegions) { _loadedRegions.Remove(rg); }
             }
 
             while (_regionsReadyToRemove.Count > 0)
@@ -297,19 +323,19 @@ namespace MazeEngine.Blocks
                             loadedChunks.Remove(key);
                             lock (_queuedChunksHpSet) _queuedChunksHpSet.Remove(key);
                             lock (_queuedChunksLpSet) _queuedChunksLpSet.Remove(key);
-                        }
             }
+        }
         }
 
         private void LoadRegion(ChunkCache cache, Vector3i region, Vector3i worldMin, Vector3i worldMax)
         {
             if (WorldSerializer.LoadRegion(cache, region))
             {
-                _generatedRegions.Add(region);
+                lock (_lockGeneratedRegions) _generatedRegions.Add(region);
                 lock (_regionsReadyToAdd) _regionsReadyToAdd.Enqueue(cache);
                 return;
             }
-            _generatedRegions.Add(region);
+            lock (_lockGeneratedRegions) _generatedRegions.Add(region);
             var crm = new Vector3i(region.X * ChunksPerRegion, region.Y * ChunksPerRegion, region.Z * ChunksPerRegion);
             for (int cx = 0; cx < ChunksPerRegion; cx++)
                 for (int cy = 0; cy < ChunksPerRegion; cy++)
@@ -343,7 +369,7 @@ namespace MazeEngine.Blocks
         {
             ProcessPendingRegions();
 
-            // 1) Geração: só 1 chunk / frame
+            // 1) Geração
             int dispatched = 0;
             lock (_queuedChunkUpdatesHp)
             {
@@ -399,8 +425,8 @@ namespace MazeEngine.Blocks
                 }
             }
 
-            // 2) Upload: só 1 HP + 1 LP / frame
-            const int maxUploads = 1;
+            // 2) Upload
+            const int maxUploads = 4;
             int ups = 0;
             lock (_queuedReadyToUploadHp)
             {
@@ -422,11 +448,14 @@ namespace MazeEngine.Blocks
                 }
             }
 
-            // 3) Adiciona regiões prontas
+            // 3) Adicionar regiões prontas
             lock (_regionsReadyToAdd)
             {
                 while (_regionsReadyToAdd.Count > 0)
-                    _regionsReadyToAdd.Dequeue().AddToWorldAndUpdate();
+                {
+                    var cache = _regionsReadyToAdd.Dequeue();
+                    cache.AddToWorldAndUpdate();
+                }
             }
         }
 

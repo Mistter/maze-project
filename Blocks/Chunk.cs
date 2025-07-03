@@ -1,4 +1,5 @@
-﻿using MazeEngine.Graphics;
+﻿// Chunk.cs
+using MazeEngine.Graphics;
 using MazeEngine.Utils;
 using System.IO;
 
@@ -17,6 +18,7 @@ namespace MazeEngine.Blocks
         private Vector3i _max = new Vector3i(-1);
 
         private readonly VertexArrayObject _vao = new VertexArrayObject();
+
         private bool _interrupted;
 
         public Chunk(World world, Vector3i position)
@@ -36,10 +38,13 @@ namespace MazeEngine.Blocks
         public void SetBlock(int x, int y, int z, uint id)
         {
             if (_blockIds[x, y, z] == id) return;
+
             _blockIds[x, y, z] = id;
+
             if (x < _min.X) _min.X = x;
             if (y < _min.Y) _min.Y = y;
             if (z < _min.Z) _min.Z = z;
+
             if (x > _max.X) _max.X = x;
             if (y > _max.Y) _max.Y = y;
             if (z > _max.Z) _max.Z = z;
@@ -47,7 +52,9 @@ namespace MazeEngine.Blocks
 
         public uint GetBlock(int x, int y, int z)
         {
-            if (x < 0 || x >= Size || y < 0 || y >= Size || z < 0 || z >= Size) return 0;
+            if (x < 0 || x >= Size || y < 0 || y >= Size || z < 0 || z >= Size)
+                return 0;
+
             return _blockIds[x, y, z];
         }
 
@@ -72,15 +79,24 @@ namespace MazeEngine.Blocks
 
         public void InterruptUpdate() => _interrupted = true;
 
-        public void Draw() => _vao.Draw();
+        public void Draw()
+        {
+            _vao.Draw();
+        }
 
         public void Write(BinaryWriter writer)
         {
-            writer.Write(_min.X); writer.Write(_min.Y); writer.Write(_min.Z);
-            writer.Write(_max.X); writer.Write(_max.Y); writer.Write(_max.Z);
-            for (int x = _min.X; x <= _max.X; x++)
-                for (int y = _min.Y; y <= _max.Y; y++)
-                    for (int z = _min.Z; z <= _max.Z; z++)
+            writer.Write(_min.X);
+            writer.Write(_min.Y);
+            writer.Write(_min.Z);
+
+            writer.Write(_max.X);
+            writer.Write(_max.Y);
+            writer.Write(_max.Z);
+
+            for (var x = _min.X; x <= _max.X; x++)
+                for (var y = _min.Y; y <= _max.Y; y++)
+                    for (var z = _min.Z; z <= _max.Z; z++)
                         writer.Write(_blockIds[x, y, z]);
         }
 
@@ -94,21 +110,20 @@ namespace MazeEngine.Blocks
 
         private void AddBlockToVao()
         {
-            for (int x = _min.X; x <= _max.X; x++)
-                for (int y = _min.Y; y <= _max.Y; y++)
-                    for (int z = _min.Z; z <= _max.Z; z++)
+            for (var x = _min.X; x <= _max.X; x++)
+                for (var y = _min.Y; y <= _max.Y; y++)
+                    for (var z = _min.Z; z <= _max.Z; z++)
                     {
                         if (_interrupted) return;
-                        VaoHelper.AddBlockToVao(
-                            _world,
+                        VaoHelper.AddBlockToVao(_world,
                             Position * Size + new Vector3i(x, y, z),
-                            x, y, z,
-                            _blockIds[x, y, z],
-                            _vao
-                        );
+                            x, y, z, _blockIds[x, y, z], _vao);
                     }
         }
 
-        public bool IsEmpty() => _vao.UploadedCount == 0;
+        public bool IsEmpty()
+        {
+            return _vao.UploadedCount == 0;
+        }
     }
 }
