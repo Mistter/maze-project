@@ -6,6 +6,7 @@
     <RootNamespace>MazeEngine</RootNamespace>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <Platforms>AnyCPU;ARM64;ARM32</Platforms>
   </PropertyGroup>
 
   <ItemGroup>

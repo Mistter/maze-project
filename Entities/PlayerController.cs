@@ -65,7 +65,7 @@ namespace MazeEngine.Entities
             if (direction.LengthSquared > 0.0001f)
             {
                 direction.Normalize();
-                float speed = keyboardState.IsKeyDown(Keys.LeftControl) ? 15f : 5f;
+                float speed = keyboardState.IsKeyDown(Keys.LeftControl) ? 15f : 8f;
                 _camera.ProcessKeyboard(direction, (float)deltaTime, speed);
             }
 
