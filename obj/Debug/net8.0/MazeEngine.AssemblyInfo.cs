@@ -14,7 +14,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("MazeEngine")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+61f9b78dfe4c4987df17849be126225f4319018d")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+438c53769eaa4c56f0540c6d76b5e296d8fa5514")]
 [assembly: System.Reflection.AssemblyProductAttribute("MazeEngine")]
 [assembly: System.Reflection.AssemblyTitleAttribute("MazeEngine")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

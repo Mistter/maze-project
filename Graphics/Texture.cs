@@ -24,11 +24,14 @@ namespace MazeEngine.Graphics
             // Faz bind dela na TextureUnit desejada (Texture0 por padrão)
             Bind(TextureUnit.Texture0);
 
+            // ** Se sua largura não for múltipla de 4, force alinhamento opcionalmente **
+            // GL.PixelStore(PixelStoreParameter.UnpackAlignment, 1);
+
             // Cria a textura 2D no OpenGL
             GL.TexImage2D(
                 TextureTarget.Texture2D,
                 0,
-                PixelInternalFormat.Rgba,           // Armazenamento interno
+                PixelInternalFormat.Rgba,                  // Armazenamento interno
                 Width,
                 Height,
                 0,
@@ -42,8 +45,8 @@ namespace MazeEngine.Graphics
             GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Nearest);
             GL.TexParameter(TextureTarget.Texture2D, (TextureParameterName)ExtTextureFilterAnisotropic.TextureMaxAnisotropyExt, 16);
 
-            // Se quiser gerar mipmaps, use GL.GenerateMipmap:
-            // GL.GenerateMipmap(GenerateMipmapTarget.Texture2D);
+            // ** Gera os mipmaps necessários para o min-filter acima **
+            GL.GenerateMipmap(GenerateMipmapTarget.Texture2D);
 
             // Desbloqueia os pixels e descarta o bitmap
             data.Dispose();

@@ -11,6 +11,7 @@ namespace MazeEngine.Entities
     internal static class PlayerController
     {
         private static Camera _camera;
+        public static Camera Camera => _camera;
         private static Vector2 _lastMousePosition;
         private static bool _firstMouse = true;
 
