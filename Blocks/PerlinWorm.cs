@@ -1,6 +1,5 @@
 ﻿using MazeEngine.Utils;
 using OpenTK.Mathematics;
-using System.Collections.Generic;
 using Vector3i = MazeEngine.Utils.Vector3i;
 
 namespace MazeEngine.Blocks

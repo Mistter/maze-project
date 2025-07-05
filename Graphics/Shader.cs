@@ -1,71 +1,71 @@
-﻿using OpenTK.Graphics.OpenGL4;
+﻿// MazeEngine/Graphics/Shader.cs
+using System;
+using System.IO;
+using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
-using MazeEngine.Utils;
 
 namespace MazeEngine.Graphics
 {
-    internal class Shader
+    public class Shader : IDisposable
     {
-        public const string FragmentShaderExt = ".fs";
-        public const string VertexShaderExt = ".vs";
+        public readonly int Handle;
 
-        private readonly int _programId;
-        private readonly int _uMVPLocation;
-
-        public Shader(string path)
-            : this(path, File.ReadAllText(path + VertexShaderExt), File.ReadAllText(path + FragmentShaderExt))
+        public Shader(string baseName)
         {
+            string vsPath = Path.Combine("Shaders", baseName + ".vs");
+            string fsPath = Path.Combine("Shaders", baseName + ".fs");
+
+            if (!File.Exists(vsPath)) throw new Exception($"VS não encontrado: {vsPath}");
+            if (!File.Exists(fsPath)) throw new Exception($"FS não encontrado: {fsPath}");
+
+            string vsSource = File.ReadAllText(vsPath);
+            string fsSource = File.ReadAllText(fsPath);
+
+            Console.WriteLine($"[DEBUG] {baseName}.vs length = {vsSource.Length}");
+            Console.WriteLine($"[DEBUG] {baseName}.fs length = {fsSource.Length}");
+
+            if (string.IsNullOrWhiteSpace(vsSource)) throw new Exception($"VS vazio: {vsPath}");
+            if (string.IsNullOrWhiteSpace(fsSource)) throw new Exception($"FS vazio: {fsPath}");
+
+            int vs = GL.CreateShader(ShaderType.VertexShader);
+            GL.ShaderSource(vs, vsSource);
+            GL.CompileShader(vs);
+            GL.GetShader(vs, ShaderParameter.CompileStatus, out var statusVs);
+            if (statusVs != (int)All.True)
+                throw new Exception($"Erro VS compile ({baseName}):\n{GL.GetShaderInfoLog(vs)}");
+
+            int fs = GL.CreateShader(ShaderType.FragmentShader);
+            GL.ShaderSource(fs, fsSource);
+            GL.CompileShader(fs);
+            GL.GetShader(fs, ShaderParameter.CompileStatus, out var statusFs);
+            if (statusFs != (int)All.True)
+                throw new Exception($"Erro FS compile ({baseName}):\n{GL.GetShaderInfoLog(fs)}");
+
+            Handle = GL.CreateProgram();
+            GL.AttachShader(Handle, vs);
+            GL.AttachShader(Handle, fs);
+            GL.LinkProgram(Handle);
+            GL.GetProgram(Handle, GetProgramParameterName.LinkStatus, out var statusLink);
+            if (statusLink != (int)All.True)
+                throw new Exception($"Erro Link ({baseName}):\n{GL.GetProgramInfoLog(Handle)}");
+
+            GL.DetachShader(Handle, vs);
+            GL.DeleteShader(vs);
+            GL.DetachShader(Handle, fs);
+            GL.DeleteShader(fs);
         }
 
-        public Shader(string name, string vsSource, string fsSource)
-        {
-            _programId = GL.CreateProgram();
+        public void Bind() => GL.UseProgram(Handle);
+        public void Unbind() => GL.UseProgram(0);
 
-            AttachShader(ShaderType.VertexShader, vsSource);
-            AttachShader(ShaderType.FragmentShader, fsSource);
-
-            GL.LinkProgram(_programId);
-            var infoLog = GL.GetProgramInfoLog(_programId);
-            if (!string.IsNullOrEmpty(infoLog))
-                Logger.Error($"Erro ao linkar shader \"{name}\": {infoLog}");
-
-            // Use o programa para obter localizações
-            GL.UseProgram(_programId);
-
-            // Definir uTexture para TextureUnit 0
-            int uTextureLocation = GL.GetUniformLocation(_programId, "uTexture");
-            if (uTextureLocation != -1)
-                GL.Uniform1(uTextureLocation, 0); // TextureUnit 0
-
-            // Obter localização de uMVP
-            _uMVPLocation = GL.GetUniformLocation(_programId, "uMVP");
-            if (_uMVPLocation == -1)
-                Logger.Error("Uniform 'uMVP' não encontrado.");
-        }
-
-        public void Bind() => GL.UseProgram(_programId);
-
+        public void SetInt(string name, int v) => GL.Uniform1(GL.GetUniformLocation(Handle, name), v);
+        public void SetFloat(string name, float v) => GL.Uniform1(GL.GetUniformLocation(Handle, name), v);
         public void SetMVP(Matrix4 mvp)
-        {
-            if (_uMVPLocation != -1)
-                GL.UniformMatrix4(_uMVPLocation, false, ref mvp);
-        }
+            => GL.UniformMatrix4(GL.GetUniformLocation(Handle, "uMVP"), false, ref mvp);
 
-        private void AttachShader(ShaderType type, string source)
-        {
-            var id = GL.CreateShader(type);
-            GL.ShaderSource(id, source);
-            GL.CompileShader(id);
+        public void SetMatrix4(string name, Matrix4 m)
+            => GL.UniformMatrix4(GL.GetUniformLocation(Handle, name), false, ref m);
 
-            // Verificar status de compilação
-            GL.GetShader(id, ShaderParameter.CompileStatus, out int status);
-            if (status == 0)
-            {
-                string info = GL.GetShaderInfoLog(id);
-                Logger.Error($"Erro compilando {type}: {info}");
-            }
-
-            GL.AttachShader(_programId, id);
-        }
+        public void Dispose() => GL.DeleteProgram(Handle);
     }
 }

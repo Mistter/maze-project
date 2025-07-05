@@ -4,8 +4,8 @@ namespace MazeEngine.Utils
 {
     internal static class WorldSerializer
     {
-        public const string WorldFolder = "World";
-        public const string RegionsFolder = "Regions";
+        public const string WorldFolder = "world";
+        public const string RegionsFolder = "regions";
 
         public static void SaveRegion(World world, Vector3i region)
         {
