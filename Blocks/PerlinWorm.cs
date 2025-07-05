@@ -1,80 +1,68 @@
-﻿using MazeEngine.Utils;
+﻿using System;
 using OpenTK.Mathematics;
-using Vector3i = MazeEngine.Utils.Vector3i;
 
-namespace MazeEngine.Blocks
+namespace MazeEngine.Utils
 {
+    /// <summary>
+    /// Gera um caminho 3D baseado em Perlin noise para túneis ramificados.
+    /// </summary>
     internal class PerlinWorm
     {
         private readonly PerlinNoise _noise;
-        private readonly World _world;
-        private readonly int _wormLength;
-        private readonly float _wormStepSize;
-        private readonly float _wormRadius;
+        private readonly Random _rand;
+        private Vector3 _position;
+        private Vector3 _direction;
 
-        public PerlinWorm(World world, int seed, int wormLength, float wormStepSize, float wormRadius)
+        public int WormLength { get; }
+        public int WormStepSize { get; }
+        public int WormRadius { get; }
+
+        /// <summary>
+        /// Cria um PerlinWorm.
+        /// </summary>
+        public PerlinWorm(PerlinNoise noiseSource, int seed, int wormLength, int wormStepSize, int wormRadius)
         {
-            _world = world;
-            _wormLength = wormLength;
-            _wormStepSize = wormStepSize;
-            _wormRadius = wormRadius;
-
-            // Usamos o Perlin Noise para guiar o movimento do verme
-            _noise = new PerlinNoise(seed, octaves: 4, persistence: 0.5f, frequency: 0.1f, amplitude: 1.0f);
+            _noise = noiseSource;
+            _rand = new Random(seed);
+            WormLength = wormLength;
+            WormStepSize = wormStepSize;
+            WormRadius = wormRadius;
         }
 
-        public void Generate(Vector3i startPosition)
+        /// <summary>
+        /// Define posição inicial do worm.
+        /// </summary>
+        public void SetPosition(Vector3 pos)
         {
-            var currentPosition = startPosition.ToVector3();
-            var direction = new Vector3(1, 0, 0); // Direção inicial do verme
-
-            for (int i = 0; i < _wormLength; i++)
-            {
-                // Gera um túnel na posição atual
-                GenerateTunnel(currentPosition);
-
-                // Atualiza a direção com base no Perlin Noise
-                float angleX = _noise.GetNoise(currentPosition.X, currentPosition.Z) * 2 * MathHelper.Pi;
-                float angleY = _noise.GetNoise(currentPosition.Y, currentPosition.Z) * 2 * MathHelper.Pi;
-
-                direction.X = MathF.Cos(angleX);
-                direction.Y = MathF.Sin(angleY);
-                direction.Z = MathF.Sin(angleX);
-
-                direction.NormalizeFast();
-
-                // Move o verme para a próxima posição
-                currentPosition += direction * _wormStepSize;
-            }
+            _position = pos;
+            // direção inicial aleatória
+            _direction = new Vector3(
+                (float)(_rand.NextDouble() * 2 - 1),
+                (float)(_rand.NextDouble() * 2 - 1),
+                (float)(_rand.NextDouble() * 2 - 1)
+            ).Normalized();
         }
 
-        private void GenerateTunnel(Vector3 position)
+        /// <summary>
+        /// Avança um passo e retorna posição do bloco em Vector3i.
+        /// </summary>
+        public Vector3i Step()
         {
-            var center = position.ToVector3i();
-            var radius = (int)MathF.Ceiling(_wormRadius);
+            // calcula nova direção via ruído 3D
+            float dx = _noise.GetNoise(_position.X, _position.Z);
+            float dy = _noise.GetNoise(_position.Y, _position.X);
+            float dz = _noise.GetNoise(_position.Z, _position.Y);
+            var nDir = new Vector3(dx, dy, dz);
+            _direction = Vector3.Lerp(_direction, nDir, 0.2f).Normalized();
 
-            // Gera um cilindro ao redor da posição atual
-            for (int x = -radius; x <= radius; x++)
-            {
-                for (int y = -radius; y <= radius; y++)
-                {
-                    for (int z = -radius; z <= radius; z++)
-                    {
-                        var blockPos = center + new Vector3i(x, y, z);
-
-                        // Verifica se o bloco está dentro do raio do túnel
-                        if (Vector3.DistanceSquared(blockPos.ToVector3(), position) <= _wormRadius * _wormRadius)
-                        {
-                            // Remove o bloco apenas se for um bloco sólido (pedra, terra, etc.)
-                            var blockId = _world.GetBlock(blockPos);
-                            if (blockId == 1 || blockId == 3) // 1 = Pedra, 3 = Terra
-                            {
-                                _world.SetBlock(blockPos, 0); // Remove o bloco (cria o túnel)
-                            }
-                        }
-                    }
-                }
-            }
+            // avança
+            _position += _direction * WormStepSize;
+            // retorna posição inteira para indexação de blocos
+            return new Vector3i(
+                (int)Math.Floor(_position.X),
+                (int)Math.Floor(_position.Y),
+                (int)Math.Floor(_position.Z)
+            );
         }
     }
 }

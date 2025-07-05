@@ -57,7 +57,11 @@ namespace MazeEngine.Blocks
             }
         }
 
-        public void AddChunk(CachedChunk chunk) => _chunks.Add(chunk.Position, chunk);
+        public void AddChunk(CachedChunk chunk)
+        {
+            if (!_chunks.ContainsKey(chunk.Position))
+                _chunks.Add(chunk.Position, chunk);
+        }
 
         public void AddToWorldAndUpdate()
         {
