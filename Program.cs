@@ -1,14 +1,10 @@
-﻿// Program.cs
-using System;
-using System.Collections.Generic;
-using System.IO;
-using OpenTK.Mathematics;
+﻿using OpenTK.Mathematics;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Windowing.Common;
 using OpenTK.Windowing.Desktop;
+using OpenTK.Windowing.GraphicsLibraryFramework;
 using MazeEngine.Graphics;
 using MazeEngine.Blocks;
-using MazeEngine.Utils;
 using MazeEngine.Entities;
 
 namespace MazeEngine
@@ -28,7 +24,6 @@ namespace MazeEngine
         private static int _quadVao;
         private static int _crosshairVao;
 
-        // novos campos para a esfera
         private static int _skySphereVao;
         private static int _skySphereVbo;
         private static int _skySphereVertexCount;
@@ -36,9 +31,17 @@ namespace MazeEngine
         private const int CrosshairSize = 32;
         private static int _fpsCounter;
         private static double _fpsTimer;
+        private static int _fpsDisplay;
         private static bool _isPaused = false;
         private static bool _debugMode = false;
         private static bool _logConsoleOpen = false;
+        private static bool _showCoords = true;
+
+        public enum Anchor { TopLeft, TopRight, BottomLeft, BottomRight, Center }
+        private static Anchor _coordAnchor = Anchor.TopLeft;
+        private static int scale = 3;
+        private static Vector2 _coordOffset = new Vector2(20, 10);
+        private static Vector4 _coordColor = new Vector4(1f, 1f, 1f, 1f);
 
         private static void Main(string[] args)
         {
@@ -66,22 +69,18 @@ namespace MazeEngine
 
         private static void OnLoad()
         {
-            // texturas alinhamento e projeção
             GL.PixelStore(PixelStoreParameter.UnpackAlignment, 1);
             UpdateProjection(_window.Size.X, _window.Size.Y);
 
-            // shaders
             _shader = new Shader("shader");
             _uiShader = new Shader("ui_shader");
             _sky2DShader = new Shader("sky_2d");
 
-            // estados GL
             GL.Enable(EnableCap.Blend);
             GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
             GL.Enable(EnableCap.DepthTest);
             GL.Enable(EnableCap.CullFace);
 
-            // blocos/UI
             BlockTexturesManager.Initialize();
             _uiTextures = new TextureArray(1024, 1024, 1);
             string menuPath = Path.Combine("Textures", "Blocks", "pause_menu.png");
@@ -92,41 +91,29 @@ namespace MazeEngine
             );
             _uiTextures.GenerateMipmaps();
 
-            // crosshair
             string crossPath = Path.Combine("Textures", "UI", "crosshair.png");
-            if (!File.Exists(crossPath))
-                Console.WriteLine($"Erro: crosshair não encontrada em {crossPath}");
+            if (!File.Exists(crossPath)) Console.WriteLine($"Erro: crosshair não encontrada em {crossPath}");
             _crosshairTex = new Texture(crossPath);
 
-            // sky equiretangular
             string skyPath = Path.Combine("Textures", "Environment", "sky.png");
-            if (!File.Exists(skyPath))
-                Console.WriteLine($"Erro: sky não encontrada em {skyPath}");
+            if (!File.Exists(skyPath)) Console.WriteLine($"Erro: sky não encontrada em {skyPath}");
             _skyTexture = new Texture(skyPath);
 
-            // cria quads e esfera
             CreateQuad();
             CreateCrosshairQuad();
             CreateSkySphere(64, 64);
         }
 
-        private static void OnUnload()
-        {
-            _world.Unload();
-        }
+        private static void OnUnload() => _world.Unload();
 
         private static void OnResize(ResizeEventArgs e)
         {
             GL.Viewport(0, 0, e.Width, e.Height);
             UpdateProjection(e.Width, e.Height);
-
             if (_quadVao != 0) GL.DeleteVertexArray(_quadVao);
             if (_crosshairVao != 0) GL.DeleteVertexArray(_crosshairVao);
             if (_skySphereVao != 0) GL.DeleteVertexArray(_skySphereVao);
-
-            CreateQuad();
-            CreateCrosshairQuad();
-            CreateSkySphere(64, 64);
+            CreateQuad(); CreateCrosshairQuad(); CreateSkySphere(64, 64);
         }
 
         private static void UpdateProjection(int w, int h)
@@ -138,34 +125,64 @@ namespace MazeEngine
         private static void OnUpdateFrame(FrameEventArgs e)
         {
             PlayerController.Update(_window, _world, ref _isPaused, ref _debugMode, ref _logConsoleOpen, e.Time);
+            if (_window.KeyboardState.IsKeyPressed(Keys.C)) _showCoords = !_showCoords;
+            _fpsCounter++; _fpsTimer += e.Time;
+            if (_fpsTimer >= 1)
+            {
+                _fpsDisplay = _fpsCounter;
+                _fpsCounter = 0;
+                _fpsTimer -= 1;
+            }
         }
 
         private static void OnRenderFrame(FrameEventArgs e)
         {
             GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
             GL.ClearColor(0f, 0f, 0f, 1f);
-
-            // 1) desenha esfera de céu com sky.png
             RenderSkySphere();
-
-            // 2) mundo 3D ou menu de pausa
             BlockTexturesManager.TextureArray.Bind(TextureUnit.Texture0);
-            if (_isPaused) RenderPauseMenu();
-            else RenderGameScene();
-
-            // 3) crosshair
+            if (_isPaused) RenderPauseMenu(); else RenderGameScene();
             RenderCrosshair();
-
+            if (_showCoords) RenderCoordinates();
             _window.SwapBuffers();
+        }
 
-            _fpsCounter++;
-            _fpsTimer += e.Time;
-            if (_fpsTimer >= 1)
+        private static void RenderCoordinates()
+        {
+            var pos = PlayerController.Position;
+            string coordText = $"X:{pos.X:F1} Y:{pos.Y:F1} Z:{pos.Z:F1}";
+            string fpsText = $"FPS:{_fpsDisplay}";
+
+            int w = _window.Size.X;
+            int h = _window.Size.Y;
+            var ortho = Matrix4.CreateOrthographicOffCenter(0, w, 0, h, -1f, 1f);
+            var scaleM = Matrix4.CreateScale(scale, scale, 1f);
+            var mvp = scaleM * ortho;
+
+            float fw = coordText.Length * TextRenderer.CharWidth * scale;
+            float fh = (TextRenderer.CharHeight * 2 + 4) * scale;
+
+            Vector2 basePos;
+            switch (_coordAnchor)
             {
-                Console.WriteLine($"FPS: {_fpsCounter}");
-                _fpsCounter = 0;
-                _fpsTimer -= 1;
+                case Anchor.TopLeft: basePos = new Vector2(_coordOffset.X, h - fh - _coordOffset.Y); break;
+                case Anchor.TopRight: basePos = new Vector2(w - fw - _coordOffset.X, h - fh - _coordOffset.Y); break;
+                case Anchor.BottomLeft: basePos = new Vector2(_coordOffset.X, _coordOffset.Y); break;
+                case Anchor.BottomRight: basePos = new Vector2(w - fw - _coordOffset.X, _coordOffset.Y); break;
+                case Anchor.Center: basePos = new Vector2((w - fw) / 2, (h - fh) / 2); break;
+                default: basePos = _coordOffset; break;
             }
+
+            // Define cor antes do desenho
+            TextRenderer.Color = _coordColor;
+
+            var invS = 1f / scale;
+            var drawP = basePos * invS;
+
+            TextRenderer.Begin(mvp);
+            TextRenderer.DrawString(coordText, drawP);
+            TextRenderer.DrawString(fpsText, drawP + new Vector2(0, TextRenderer.CharHeight + 2));
+            TextRenderer.End();
         }
 
         private static void RenderSkySphere()

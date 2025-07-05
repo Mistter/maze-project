@@ -1,56 +1,39 @@
-﻿// World.cs
-using MazeEngine.Entities;
+﻿using MazeEngine.Entities;
 using MazeEngine.Utils;
 using OpenTK.Mathematics;
 using Vector3i = MazeEngine.Utils.Vector3i;
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using System.Threading;
-using OpenTK.Windowing.GraphicsLibraryFramework;
 
 namespace MazeEngine.Blocks
 {
     internal class World
     {
         public const int MaxChunkUploads = 1;
-        public const int RegionSize = 2 * Chunk.Size;      // 32 blocos
+        public const int RegionSize = 2 * Chunk.Size; // 32 blocos
         public const int ChunksPerRegion = RegionSize / Chunk.Size; // 2 chunks/região
-
         public static readonly int MaxAsyncChunkUpdates = Environment.ProcessorCount * 8;
 
         // Locks para proteger acesso concorrente
         private readonly object _lockLoadedRegions = new object();
         private readonly object _lockGeneratedRegions = new object();
 
-        public static Vector3i RegionInWorld(Vector3i v) => RegionInWorld(v.X, v.Y, v.Z);
-        public static Vector3i RegionInWorld(int x, int y, int z) => new Vector3i(
-            x < 0 ? (x + 1) / RegionSize - 1 : x / RegionSize,
-            y < 0 ? (y + 1) / RegionSize - 1 : y / RegionSize,
-            z < 0 ? (z + 1) / RegionSize - 1 : z / RegionSize
-        );
+        // Distância horizontal de renderização (em regiões)
+        public int RenderDistance { get; set; } = 16;
 
-        public static Vector3i ChunkInWorld(Vector3i v) => ChunkInWorld(v.X, v.Y, v.Z);
-        public static Vector3i ChunkInWorld(int x, int y, int z) => new Vector3i(
-            x < 0 ? (x + 1) / Chunk.Size - 1 : x / Chunk.Size,
-            y < 0 ? (y + 1) / Chunk.Size - 1 : y / Chunk.Size,
-            z < 0 ? (z + 1) / Chunk.Size - 1 : z / Chunk.Size
-        );
+        // Limites de Y do mapa (em blocos)
+        // Geração procedural ficará entre MinWorldY e MaxProceduralY
+        public int MinWorldY { get; set; } = 0;
+        public int MaxWorldY { get; set; } = 512;
+        public int MaxProceduralY { get; set; } = 256;
 
-        public static Vector3i BlockInChunk(int x, int y, int z) => new Vector3i(
-            x < 0 ? (x + 1) % Chunk.Size + Chunk.Size - 1 : x % Chunk.Size,
-            y < 0 ? (y + 1) % Chunk.Size + Chunk.Size - 1 : y % Chunk.Size,
-            z < 0 ? (z + 1) % Chunk.Size + Chunk.Size - 1 : z % Chunk.Size
-        );
+        // Altura base e variação para o terreno procedural
+        public int TerrainBaseHeight { get; set; } = 100;       // nível médio do terreno
+        public int TerrainHeightRange { get; set; } = 32;       // variação acima/abaixo da base
 
-        public readonly Dictionary<Vector3i, Chunk> loadedChunks = new Dictionary<Vector3i, Chunk>();
-        public IEnumerable<Chunk> Chunks => loadedChunks.Values;
+        // Controle de quantas regiões acima/abaixo do jogador gerar
+        private readonly int VerticalRegionDistance = 2;
 
-        public int ChunksQueuedCount => _queuedChunkUpdatesHp.Count + _queuedChunkUpdatesLp.Count;
-        public int ChunksReadyCount => _queuedReadyToUploadHp.Count + _queuedReadyToUploadLp.Count;
-        public int ChunksLoadedCount => loadedChunks.Count;
-        public int ChunkThreadsCount => _chunkThreadsCount;
+        // Usado apenas no PreGenerateCaverns
+        private const int MaxYRegions = 256 / RegionSize;
 
         private readonly HashSet<Vector3i> _loadedRegions = new HashSet<Vector3i>();
         private readonly HashSet<Vector3i> _generatedRegions = new HashSet<Vector3i>();
@@ -67,10 +50,14 @@ namespace MazeEngine.Blocks
 
         private int _chunkThreadsCount;
         private bool _unloaded;
-        public int RenderDistance { get; set; } = 16;
 
-        private const int MaxYRegions = 256 / RegionSize;
-        private readonly int VerticalRegionDistance = 2;
+        public IEnumerable<Chunk> Chunks => loadedChunks.Values;
+        public readonly Dictionary<Vector3i, Chunk> loadedChunks = new Dictionary<Vector3i, Chunk>();
+
+        public int ChunksQueuedCount => _queuedChunkUpdatesHp.Count + _queuedChunkUpdatesLp.Count;
+        public int ChunksReadyCount => _queuedReadyToUploadHp.Count + _queuedReadyToUploadLp.Count;
+        public int ChunksLoadedCount => loadedChunks.Count;
+        public int ChunkThreadsCount => _chunkThreadsCount;
 
         private readonly PerlinNoise _perlinNoise;
         private readonly PerlinWorm _perlinWorm;
@@ -90,6 +77,9 @@ namespace MazeEngine.Blocks
             _perlinWorm = new PerlinWorm(this, seed, wormLength: 200, wormStepSize: 5, wormRadius: 5);
         }
 
+        /// <summary>
+        /// Pré-geração de cavernas em todas as regiões até MaxYRegions.
+        /// </summary>
         private void PreGenerateCaverns()
         {
             var initial = new List<Vector3i>();
@@ -108,6 +98,9 @@ namespace MazeEngine.Blocks
             }
         }
 
+        /// <summary>
+        /// Define um bloco na posição especificada.
+        /// </summary>
         public void SetBlock(Vector3i bp, uint id) => SetBlock(bp.X, bp.Y, bp.Z, id);
         public void SetBlock(int x, int y, int z, uint id) => SetBlock(x, y, z, id, true, false);
         public void SetBlock(int x, int y, int z, uint id, bool update, bool lowPriority)
@@ -135,22 +128,22 @@ namespace MazeEngine.Blocks
             else if (bc.Z == Chunk.Size - 1) QueueChunkUpdate(cp + new Vector3i(0, 0, +1), lowPriority);
         }
 
-        public uint GetBlock(Vector3i bp) => GetBlock(bp.X, bp.Y, bp.Z);
-
         /// <summary>
-        /// Retorna o ID do bloco. Se o chunk não existir, devolve 1 (stone) para bloquear face.
+        /// Retorna o ID do bloco. Se não existir, retorna 1 (stone).
         /// </summary>
+        public uint GetBlock(Vector3i bp) => GetBlock(bp.X, bp.Y, bp.Z);
         public uint GetBlock(int x, int y, int z)
         {
             var cp = ChunkInWorld(x, y, z);
             var bc = BlockInChunk(x, y, z);
             if (!loadedChunks.TryGetValue(cp, out var c))
-            {
                 return 1;
-            }
             return c.GetBlock(bc.X, bc.Y, bc.Z);
         }
 
+        /// <summary>
+        /// Enfileira atualização de chunk.
+        /// </summary>
         public void QueueChunkUpdate(Vector3i pos, bool lp)
         {
             if (!loadedChunks.TryGetValue(pos, out var chunk)) return;
@@ -162,12 +155,15 @@ namespace MazeEngine.Blocks
                 if (!set.Contains(pos))
                 {
                     set.Add(pos);
-                    lock (q) q.Enqueue(chunk);
+                    lock (q) { q.Enqueue(chunk); }
                 }
             }
         }
         public void QueueChunkUpdate(Chunk c, bool lp) => QueueChunkUpdate(c.Position, lp);
 
+        /// <summary>
+        /// Loop principal: descarrega, carrega e atualiza chunks.
+        /// </summary>
         public void Update(Vector3 playerPos)
         {
             if (_unloaded) return;
@@ -176,20 +172,17 @@ namespace MazeEngine.Blocks
             UpdateChunks();
         }
 
+        /// <summary>
+        /// Raytrace para seleção de blocos.
+        /// </summary>
         public BlockRaytraceResult BlockRaytrace(Vector3 pos, Vector3 dir, float r)
         {
             const float eps = 1e-6f;
             dir.NormalizeFast();
             var start = pos.ToVector3i();
             var end = (pos + dir * r).ToVector3i();
-
-            int minX = Math.Min(start.X, end.X) - 1,
-                minY = Math.Min(start.Y, end.Y) - 1,
-                minZ = Math.Min(start.Z, end.Z) - 1;
-            int maxX = Math.Max(start.X, end.X) + 1,
-                maxY = Math.Max(start.Y, end.Y) + 1,
-                maxZ = Math.Max(start.Z, end.Z) + 1;
-
+            int minX = Math.Min(start.X, end.X) - 1, minY = Math.Min(start.Y, end.Y) - 1, minZ = Math.Min(start.Z, end.Z) - 1;
+            int maxX = Math.Max(start.X, end.X) + 1, maxY = Math.Max(start.Y, end.Y) + 1, maxZ = Math.Max(start.Z, end.Z) + 1;
             BlockRaytraceResult result = null;
             for (int x = minX; x <= maxX; x++)
                 for (int y = minY; y <= maxY; y++)
@@ -198,7 +191,6 @@ namespace MazeEngine.Blocks
                         var b = GetBlock(x, y, z);
                         if (b == 0) continue;
                         var center = new Vector3(x + 0.5f, y + 0.5f, z + 0.5f);
-                        const float half = 0.5f;
                         foreach (var face in BlockFaceHelper.Faces)
                         {
                             var n = face.GetNormali().ToVector3();
@@ -207,10 +199,10 @@ namespace MazeEngine.Blocks
                             var dist = Vector3.Dot(center - pos, n) / div;
                             if (dist < 0 || dist > r) continue;
                             var pt = pos + dir * dist;
+                            const float half = 0.5f;
                             if (pt.X < center.X - half || pt.X > center.X + half ||
                                 pt.Y < center.Y - half || pt.Y > center.Y + half ||
-                                pt.Z < center.Z - half || pt.Z > center.Z + half)
-                                continue;
+                                pt.Z < center.Z - half || pt.Z > center.Z + half) continue;
                             if (result == null || result.Distance > dist)
                                 result = new BlockRaytraceResult(face, new Vector3i(x, y, z), dist, pt.ToVector3i());
                         }
@@ -218,6 +210,9 @@ namespace MazeEngine.Blocks
             return result;
         }
 
+        /// <summary>
+        /// Descarrega todas as regiões e salva.
+        /// </summary>
         public void Unload()
         {
             _unloaded = true;
@@ -230,18 +225,26 @@ namespace MazeEngine.Blocks
             Logger.Info("World saved!");
         }
 
+        /// <summary>
+        /// Carrega regiões de chunks ao redor do jogador, dinâmica em Y.
+        /// </summary>
         private void LoadChunks(Vector3 playerPos)
         {
             var pr = RegionInWorld(playerPos.ToVector3i());
             var max2 = RenderDistance * RenderDistance;
-            int minY = Math.Max(0, pr.Y - VerticalRegionDistance);
-            int maxY = Math.Min(MaxYRegions - 1, pr.Y + VerticalRegionDistance);
+            int playerRegionY = pr.Y;
+            int minRegionY = playerRegionY - VerticalRegionDistance;
+            int maxRegionY = playerRegionY + VerticalRegionDistance;
+            int globalMinRegionY = MinWorldY / RegionSize;
+            int globalMaxProcRegionY = MaxProceduralY / RegionSize;
+            minRegionY = Math.Max(minRegionY, globalMinRegionY);
+            maxRegionY = Math.Min(maxRegionY, globalMaxProcRegionY);
 
             for (int x = -RenderDistance; x <= RenderDistance; x++)
                 for (int z = -RenderDistance; z <= RenderDistance; z++)
                 {
                     if (x * x + z * z > max2) continue;
-                    for (int y = minY; y <= maxY; y++)
+                    for (int y = minRegionY; y <= maxRegionY; y++)
                     {
                         var region = new Vector3i(pr.X + x, y, pr.Z + z);
                         bool already;
@@ -256,6 +259,9 @@ namespace MazeEngine.Blocks
                 }
         }
 
+        /// <summary>
+        /// Processa filas de geração pendentes em threads.
+        /// </summary>
         private void ProcessPendingRegions()
         {
             int dispatched = 0;
@@ -280,15 +286,16 @@ namespace MazeEngine.Blocks
             }
         }
 
+        /// <summary>
+        /// Descarrega chunks fora do alcance ou em unloadAll.
+        /// </summary>
         private void UnloadChunks(bool unloadAll)
         {
             var stack = new Stack<Vector3i>();
             var pr = RegionInWorld(PlayerController.Position.ToVector3i());
             int r2 = RenderDistance * RenderDistance;
-
             List<Vector3i> snapshot;
             lock (_lockLoadedRegions) snapshot = _loadedRegions.ToList();
-
             foreach (var r in snapshot)
             {
                 var v = r - pr;
@@ -296,7 +303,6 @@ namespace MazeEngine.Blocks
                 if (!unloadAll && d2 <= r2) continue;
                 stack.Push(r);
             }
-
             while (stack.Count > 0)
             {
                 var rg = stack.Pop();
@@ -308,7 +314,6 @@ namespace MazeEngine.Blocks
                 });
                 lock (_lockLoadedRegions) { _loadedRegions.Remove(rg); }
             }
-
             while (_regionsReadyToRemove.Count > 0)
             {
                 var rg = _regionsReadyToRemove.Dequeue();
@@ -323,10 +328,13 @@ namespace MazeEngine.Blocks
                             loadedChunks.Remove(key);
                             lock (_queuedChunksHpSet) _queuedChunksHpSet.Remove(key);
                             lock (_queuedChunksLpSet) _queuedChunksLpSet.Remove(key);
+                        }
             }
         }
-        }
 
+        /// <summary>
+        /// Carrega ou gera uma região inteira.
+        /// </summary>
         private void LoadRegion(ChunkCache cache, Vector3i region, Vector3i worldMin, Vector3i worldMax)
         {
             if (WorldSerializer.LoadRegion(cache, region))
@@ -348,7 +356,8 @@ namespace MazeEngine.Blocks
                             for (int lz = 0; lz < Chunk.Size; lz++)
                             {
                                 float noise = _perlinNoise.GetNoise(bx + lx, bz + lz);
-                                int h = (int)(noise * 32) + 32;
+                                int variation = (int)(noise * TerrainHeightRange);
+                                int h = TerrainBaseHeight + variation;
                                 for (int ly = 0; ly < Chunk.Size; ly++)
                                 {
                                     int wy = by + ly;
@@ -365,11 +374,12 @@ namespace MazeEngine.Blocks
             lock (_regionsReadyToAdd) _regionsReadyToAdd.Enqueue(cache);
         }
 
+        /// <summary>
+        /// Gera e faz upload de chunks pendentes.
+        /// </summary>
         private void UpdateChunks()
         {
             ProcessPendingRegions();
-
-            // 1) Geração
             int dispatched = 0;
             lock (_queuedChunkUpdatesHp)
             {
@@ -397,35 +407,6 @@ namespace MazeEngine.Blocks
                     dispatched++;
                 }
             }
-            dispatched = 0;
-            lock (_queuedChunkUpdatesLp)
-            {
-                while (dispatched < MaxChunkUpdatesPerFrame
-                       && _queuedChunkUpdatesLp.Count > 0
-                       && _chunkThreadsCount < MaxAsyncChunkUpdates)
-                {
-                    var chunk = _queuedChunkUpdatesLp.Dequeue();
-                    _queuedChunksLpSet.Remove(chunk.Position);
-                    Interlocked.Increment(ref _chunkThreadsCount);
-                    ThreadPool.QueueUserWorkItem(_ =>
-                    {
-                        try
-                        {
-                            if (chunk.Update())
-                            {
-                                lock (_queuedReadyToUploadLp)
-                                    if (!_queuedReadyToUploadLp.Contains(chunk))
-                                        _queuedReadyToUploadLp.Enqueue(chunk);
-                            }
-                        }
-                        catch { }
-                        finally { Interlocked.Decrement(ref _chunkThreadsCount); }
-                    });
-                    dispatched++;
-                }
-            }
-
-            // 2) Upload
             const int maxUploads = 4;
             int ups = 0;
             lock (_queuedReadyToUploadHp)
@@ -447,8 +428,6 @@ namespace MazeEngine.Blocks
                     ups++;
                 }
             }
-
-            // 3) Adicionar regiões prontas
             lock (_regionsReadyToAdd)
             {
                 while (_regionsReadyToAdd.Count > 0)
@@ -459,6 +438,9 @@ namespace MazeEngine.Blocks
             }
         }
 
+        /// <summary>
+        /// Faz upload manual de todos os chunks pendentes.
+        /// </summary>
         public void ForceUploadAllPending()
         {
             UploadChunkQueue(_queuedReadyToUploadHp, int.MaxValue);
@@ -473,5 +455,26 @@ namespace MazeEngine.Blocks
                 if (c != null) c.Upload();
             }
         }
+
+        // Helpers estáticos
+        public static Vector3i RegionInWorld(Vector3i v) => RegionInWorld(v.X, v.Y, v.Z);
+        public static Vector3i RegionInWorld(int x, int y, int z) => new Vector3i(
+            x < 0 ? (x + 1) / RegionSize - 1 : x / RegionSize,
+            y < 0 ? (y + 1) / RegionSize - 1 : y / RegionSize,
+            z < 0 ? (z + 1) / RegionSize - 1 : z / RegionSize
+        );
+
+        public static Vector3i ChunkInWorld(Vector3i v) => ChunkInWorld(v.X, v.Y, v.Z);
+        public static Vector3i ChunkInWorld(int x, int y, int z) => new Vector3i(
+            x < 0 ? (x + 1) / Chunk.Size - 1 : x / Chunk.Size,
+            y < 0 ? (y + 1) / Chunk.Size - 1 : y / Chunk.Size,
+            z < 0 ? (z + 1) / Chunk.Size - 1 : z / Chunk.Size
+        );
+
+        public static Vector3i BlockInChunk(int x, int y, int z) => new Vector3i(
+            x < 0 ? (x + 1) % Chunk.Size + Chunk.Size - 1 : x % Chunk.Size,
+            y < 0 ? (y + 1) % Chunk.Size + Chunk.Size - 1 : y % Chunk.Size,
+            z < 0 ? (z + 1) % Chunk.Size + Chunk.Size - 1 : z % Chunk.Size
+        );
     }
 }
