@@ -1,68 +1,72 @@
-﻿using System;
-using OpenTK.Mathematics;
+﻿using OpenTK.Mathematics;
 
 namespace MazeEngine.Utils
 {
-    /// <summary>
-    /// Gera um caminho 3D baseado em Perlin noise para túneis ramificados.
-    /// </summary>
-    internal class PerlinWorm
+    public class PerlinWorm
     {
         private readonly PerlinNoise _noise;
         private readonly Random _rand;
+        private readonly int _length;
+        private readonly float _stepSize;
+        private readonly int _radius;
         private Vector3 _position;
-        private Vector3 _direction;
 
-        public int WormLength { get; }
-        public int WormStepSize { get; }
-        public int WormRadius { get; }
+        // Ajuste esta escala para controlar a “suavidade” da curva
+        private const float NoiseScale = 0.01f;
 
-        /// <summary>
-        /// Cria um PerlinWorm.
-        /// </summary>
-        public PerlinWorm(PerlinNoise noiseSource, int seed, int wormLength, int wormStepSize, int wormRadius)
+        public int WormLength => _length;
+        public float WormStepSize => _stepSize;
+        public int WormRadius => _radius;
+
+        public PerlinWorm(PerlinNoise noise, int seed, int wormLength, int wormStepSize, int wormRadius)
         {
-            _noise = noiseSource;
+            _noise = noise;
             _rand = new Random(seed);
-            WormLength = wormLength;
-            WormStepSize = wormStepSize;
-            WormRadius = wormRadius;
+            _length = wormLength;
+            _stepSize = wormStepSize;
+            _radius = wormRadius;
+            _position = Vector3.Zero;
         }
 
         /// <summary>
-        /// Define posição inicial do worm.
+        /// Define a posição inicial do worm.
         /// </summary>
         public void SetPosition(Vector3 pos)
         {
             _position = pos;
-            // direção inicial aleatória
-            _direction = new Vector3(
-                (float)(_rand.NextDouble() * 2 - 1),
-                (float)(_rand.NextDouble() * 2 - 1),
-                (float)(_rand.NextDouble() * 2 - 1)
-            ).Normalized();
         }
 
         /// <summary>
-        /// Avança um passo e retorna posição do bloco em Vector3i.
+        /// Avança o worm um passo, retornando a nova posição.
         /// </summary>
-        public Vector3i Step()
+        public Vector3 Step()
         {
-            // calcula nova direção via ruído 3D
-            float dx = _noise.GetNoise(_position.X, _position.Z);
-            float dy = _noise.GetNoise(_position.Y, _position.X);
-            float dz = _noise.GetNoise(_position.Z, _position.Y);
-            var nDir = new Vector3(dx, dy, dz);
-            _direction = Vector3.Lerp(_direction, nDir, 0.2f).Normalized();
+            // Escala usada para amostrar o ruído suavemente
+            const float NoiseScale = 0.01f;
 
-            // avança
-            _position += _direction * WormStepSize;
-            // retorna posição inteira para indexação de blocos
-            return new Vector3i(
-                (int)Math.Floor(_position.X),
-                (int)Math.Floor(_position.Y),
-                (int)Math.Floor(_position.Z)
-            );
+            // Converte a posição atual para coordenadas de ruído
+            float nx = _position.X * NoiseScale;
+            float ny = _position.Y * NoiseScale;
+            float nz = _position.Z * NoiseScale;
+
+            // Calcula a direção a partir de três amostras de ruído 3D
+            float dx = _noise.GetNoise3D(nx + 1000, ny, nz);
+            float dy = _noise.GetNoise3D(nx, ny + 1000, nz);
+            float dz = _noise.GetNoise3D(nx, ny, nz + 1000);
+
+            var dir = new Vector3(dx, dy, dz);
+
+            // Se o vetor for muito pequeno, gera uma direção aleatória
+            if (dir.LengthFast < 1e-6f)
+                dir = new Vector3(
+                    (float)_rand.NextDouble() - 0.5f,
+                    (float)_rand.NextDouble() - 0.5f,
+                    (float)_rand.NextDouble() - 0.5f
+                );
+
+            dir.NormalizeFast();
+            _position += dir * _stepSize;
+            return _position;
         }
     }
 }
