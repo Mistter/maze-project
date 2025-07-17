@@ -5,63 +5,60 @@ namespace MazeEngine.Utils
     internal static class WorldSerializer
     {
         public const string WorldFolder = "world";
-        public const string RegionsFolder = "regions";
+        public const string ChunksFolder = "chunks"; // pode trocar de Regions para Chunks
 
-        public static void SaveRegion(World world, Vector3i region)
+        // Salva um chunk individual
+        public static void SaveChunk(World world, Vector3i chunkPos)
         {
-            var file = new FileInfo(Path.Combine(WorldFolder, RegionsFolder, GetRegionFileName(region)));
-            file.Directory?.Create();
+            var dir = Path.Combine(WorldFolder, ChunksFolder);
+            Directory.CreateDirectory(dir);
 
-            using (var writer = new BinaryWriter(file.Create()))
+            string temp = Path.Combine(dir, $"{chunkPos.X} {chunkPos.Y} {chunkPos.Z}.tmp");
+            string dest = Path.Combine(dir, $"{chunkPos.X} {chunkPos.Y} {chunkPos.Z}");
+
+            // 1) Grava em .tmp
+            using (var writer = new BinaryWriter(File.Create(temp)))
             {
-                var count = 0;
-                writer.Seek(sizeof(uint), SeekOrigin.Begin);
-                var chunkMinPos = World.ChunkInWorld(region * World.RegionSize);
-
-                for (var x = 0; x < World.ChunksPerRegion; x++)
-                {
-                    for (var y = 0; y < World.ChunksPerRegion; y++)
-                    {
-                        for (var z = 0; z < World.ChunksPerRegion; z++)
-                        {
-                            var key = chunkMinPos + new Vector3i(x, y, z);
-                            if (!world.loadedChunks.TryGetValue(key, out Chunk chunk))
-                                continue;
-
-                            writer.Write(key.X);
-                            writer.Write(key.Y);
-                            writer.Write(key.Z);
-                            chunk.Write(writer);
-
-                            count++;
-                        }
-                    }
-                }
-
-                writer.Seek(0, SeekOrigin.Begin);
-                writer.Write((uint)count);
+                if (!world.loadedChunks.TryGetValue(chunkPos, out var chunk))
+                    return;
+                chunk.Write(writer);
             }
+
+            // 2) Substitui o antigo
+            if (File.Exists(dest)) File.Delete(dest);
+            File.Move(temp, dest);
         }
 
-        public static bool LoadRegion(ChunkCache cache, Vector3i region)
+        // Carrega um chunk individual
+        public static bool LoadChunk(ChunkCache cache, Vector3i chunkPos)
         {
-            var file = new FileInfo(Path.Combine(WorldFolder, RegionsFolder, GetRegionFileName(region)));
+            var file = new FileInfo(Path.Combine(WorldFolder, ChunksFolder, GetChunkFileName(chunkPos)));
             if (!file.Exists) return false;
 
             using (var reader = new BinaryReader(file.OpenRead()))
             {
-                var count = reader.ReadInt32();
-                for (var i = 0; i < count; i++)
-                {
-                    var chunkPos = new Vector3i(reader.ReadInt32(), reader.ReadInt32(), reader.ReadInt32());
-                    var chunk = new CachedChunk(cache.World, chunkPos, reader);
-                    cache.AddChunk(chunk);
-                }
+                var chunk = new CachedChunk(cache.World, chunkPos, reader);
+                cache.AddChunk(chunk);
             }
 
             return true;
         }
 
-        private static string GetRegionFileName(Vector3i region) => $"{region.X} {region.Y} {region.Z}";
+        public static bool SafeLoadChunk(ChunkCache cache, Vector3i pos)
+        {
+            try
+            {
+                return LoadChunk(cache, pos);
+            }
+            catch (EndOfStreamException)
+            {
+                // joga fora e regenera
+                var file = Path.Combine(WorldFolder, ChunksFolder, $"{pos.X} {pos.Y} {pos.Z}");
+                if (File.Exists(file)) File.Delete(file);
+                return false;
+            }
+        }
+
+        private static string GetChunkFileName(Vector3i chunkPos) => $"{chunkPos.X} {chunkPos.Y} {chunkPos.Z}";
     }
 }
