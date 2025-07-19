@@ -80,8 +80,8 @@ namespace MazeEngine.Blocks
 
         // Bifurcação das cavernas
         public static double WormBranchChance = 0.004;     // Chance de bifurcar por segmento (eg: 0.004 = 0.4%)
-        public static int MaxBranchesPerWorm = 2;          // Máximo de branches que cada worm pode criar (máximo de branch permitido)
-        public static int BranchRecursionDepth = 2;        // Profundidade máxima de recursão de branches (0 = um branch não pode gerar outro branch)
+        public static int MaxBranchesPerWorm = 2;          // Máximo de branches que cada worm pode criar
+        public static int BranchRecursionDepth = 2;        // Profundidade máxima de recursão de branches
         public static float BranchCurveBoost = 1.3f;       // Quão caótico é o novo branch
 
         // Radius das cavernas
@@ -99,9 +99,9 @@ namespace MazeEngine.Blocks
         public static float MegaRoomMaxRadius = 9.0f;      // largura/espessura do mega burraco
         public static int MegaRoomBlendLength = 18;        // suavização do mega buraco ao surgir (aumentar valor suaviza mais!)
 
-        // Limitação de sobreposições
-        public static float MinMegaRoomDistance = 32.0f;   // Distância mínima entre MegaRooms
-        public static float MinWormStartDistance = 24.0f;  // Distância mínima entre starts de worms
+        // Limitação de sobreposições (pode ignorar ou customizar se quiser)
+        public static float MinMegaRoomDistance = 32.0f;   // Distância mínima entre MegaRooms (não usado no procedural stateless)
+        public static float MinWormStartDistance = 24.0f;  // Distância mínima entre starts de worms (não usado no procedural stateless)
 
         // Fim do tunel
         public static float WormDeathChance = 0.0004f;     // Chance de morte súbita por segmento
@@ -122,286 +122,12 @@ namespace MazeEngine.Blocks
             return TerrainBaseHeight + noise * TerrainHeightRange;
         }
 
-        private static List<Vector3> _recentMegaRoomCenters = new List<Vector3>();
-        private static List<Vector3> _recentWormStarts = new List<Vector3>();
-
-        private static bool IsFarEnough(List<Vector3> list, Vector3 pos, float minDist)
-        {
-            foreach (var p in list)
-                if ((p - pos).LengthSquared < minDist * minDist)
-                    return false;
-            return true;
-        }
-
         // Estrutura para segmento de worm
         struct WormSegment
         {
             public Vector3 Position;
             public Vector3 Direction;
             public float Radius;
-        }
-
-        // Lista global de worms por região
-        private static Dictionary<(int, int), List<WormSegment[]>> _allRegionWorms = new Dictionary<(int, int), List<WormSegment[]>>();
-        private static readonly object _wormLock = new object();
-
-        // Gera worms para UMA região (região de 200x200 em X/Z)
-        private List<WormSegment[]> GenerateWormsForRegion(int regionX, int regionZ, int seed)
-        {
-            var worms = new List<WormSegment[]>();
-            int regionSeed = seed ^ (int)(regionX * 341873128712L ^ regionZ * 132897987541L);
-            var random = new Random(regionSeed);
-
-            int wormCount = random.Next(MinWormsPerRegion, MaxWormsPerRegion + 1);
-            for (int i = 0; i < wormCount; i++)
-            {
-                int wormSeed = regionSeed ^ (i * 10007);
-                float startX = regionX * CaveRegionSize + random.Next(0, CaveRegionSize);
-                float startY = random.Next(30, 80);
-                float startZ = regionZ * CaveRegionSize + random.Next(0, CaveRegionSize);
-
-                float angle = (float)(random.NextDouble() * Math.PI * 2);
-                Vector3 dir = new Vector3((float)Math.Cos(angle), (float)((random.NextDouble() - 0.5) * 0.4f), (float)Math.Sin(angle));
-
-                // Novo: comprimento aleatório do túnel!
-                int wormLength = random.Next(WormMinLength, WormMaxLength + 1);
-
-                var worm = GenerateWormSegments(
-                    wormLength, wormSeed, new Vector3(startX, startY, startZ), dir, WormStep, WormCurve
-                ).ToArray();
-                worms.Add(worm);
-            }
-            return worms;
-        }
-
-        // Garante que worms de uma região estejam carregados
-        private void EnsureRegionWormsLoaded(int regionX, int regionZ)
-        {
-            lock (_wormLock)
-            {
-                if (!_allRegionWorms.ContainsKey((regionX, regionZ)))
-                {
-                    _allRegionWorms[(regionX, regionZ)] = GenerateWormsForRegion(regionX, regionZ, seed);
-                }
-            }
-        }
-
-        // Gera o caminho do worm (igual ao seu antigo, mas agora retorna array)
-        private static List<World.WormSegment> GenerateWormSegments(
-    int count,
-    int seed,
-    Vector3 start,
-    Vector3 dir,
-    float stepSize,
-    float curveAmount,
-    int branchDepth = 0,
-    int maxBranches = -1)
-        {
-            var list = new List<WormSegment>();
-            var random = new Random(seed);
-            Vector3 position = start;
-            Vector3 direction = dir.Normalized();
-
-            float yaw = (float)Math.Atan2(direction.Z, direction.X);
-            float pitch = (float)Math.Asin(direction.Y);
-
-            int branchesCreated = 0;
-            int branchesLimit = (maxBranches == -1) ? MaxBranchesPerWorm : maxBranches;
-
-            // ====== Sobreposição de início de worm ======
-            if (branchDepth == 0)
-            {
-                if (!IsFarEnough(_recentWormStarts, start, MinWormStartDistance))
-                    return list; // Não gera esse worm
-                _recentWormStarts.Add(start);
-            }
-
-            // Mega room
-            bool inMegaRoom = false;
-            int megaRoomStart = -1, megaRoomEnd = -1, megaRoomLength = 0;
-            float megaRoomTargetRadius = DefaultWormRadius;
-            float defaultRadius = DefaultWormRadius;
-            float radius = DefaultWormRadius;
-
-            // Morte súbita
-            bool dying = false;
-            int deathStart = -1;
-
-            for (int i = 0; i < count; i++)
-            {
-                // ====== Mega room: só inicia se não sobrepor ======
-                if (!inMegaRoom && random.NextDouble() < MegaRoomChance)
-                {
-                    if (IsFarEnough(_recentMegaRoomCenters, position, MinMegaRoomDistance))
-                    {
-                        inMegaRoom = true;
-                        megaRoomStart = i;
-                        megaRoomLength = random.Next(MegaRoomMinLength, MegaRoomMaxLength + 1);
-                        megaRoomEnd = megaRoomStart + megaRoomLength;
-                        megaRoomTargetRadius = (float)(MegaRoomMinRadius + (MegaRoomMaxRadius - MegaRoomMinRadius) * random.NextDouble());
-                        _recentMegaRoomCenters.Add(position);
-                    }
-                }
-
-                // ====== Suavização de raio (mega room) ======
-                if (inMegaRoom)
-                {
-                    int blendIn = Math.Min(i - megaRoomStart, MegaRoomBlendLength);
-                    int blendOut = Math.Min(megaRoomEnd - i, MegaRoomBlendLength);
-
-                    if (blendIn < MegaRoomBlendLength)
-                        radius = MathHelper.Lerp(defaultRadius, megaRoomTargetRadius, blendIn / (float)MegaRoomBlendLength);
-                    else if (blendOut < MegaRoomBlendLength)
-                        radius = MathHelper.Lerp(megaRoomTargetRadius, defaultRadius, 1f - (blendOut / (float)MegaRoomBlendLength));
-                    else
-                        radius = megaRoomTargetRadius;
-
-                    if (i >= megaRoomEnd)
-                    {
-                        inMegaRoom = false;
-                        radius = defaultRadius;
-                    }
-                }
-                else
-                {
-                    // ====== Radius padrão, com variação suavizada ======
-                    float targetRadius = defaultRadius + ((float)random.NextDouble() - 0.5f) * (WormRadiusVariation * 3);
-                    targetRadius = Math.Max(1.5f, targetRadius);
-                    // Suaviza transição do raio, se desejado
-                    float radiusSmoothFactor = 0.28f; // Novo parâmetro! Exponha se quiser mais controle
-                    radius = radius * (1 - radiusSmoothFactor) + targetRadius * radiusSmoothFactor;
-                }
-
-                // ====== Morte súbita ======
-                if (!dying && i > MinWormDeathLength && random.NextDouble() < WormDeathChance)
-                {
-                    dying = true;
-                    deathStart = i;
-                }
-                if (dying)
-                {
-                    float t = (i - deathStart) / (float)WormDeathBlendLength;
-                    radius = MathHelper.Lerp(radius, 0f, t);
-                    if (t >= 1f)
-                        break; // encerra worm
-                }
-
-                // ====== Variação suave do ângulo ======
-                float deltaYaw = ((float)random.NextDouble() - 0.5f) * curveAmount * 1.4f;
-                float deltaPitch = ((float)random.NextDouble() - 0.5f) * curveAmount * 0.35f;
-
-                // Punch chance
-                if (random.NextDouble() < WormPunchChance)
-                {
-                    float punch = (float)(random.NextDouble() - 0.5f) * curveAmount * WormPunchStrength;
-                    deltaYaw += punch;
-                    if (random.NextDouble() < 0.55)
-                        deltaPitch += (float)(random.NextDouble() - 0.5f) * curveAmount * 0.7f;
-                    else
-                        deltaPitch += (float)(random.NextDouble() - 0.5f) * curveAmount * 1.6f;
-                }
-
-                // Virada brusca rara
-                if (random.NextDouble() < 0.02)
-                {
-                    yaw += (float)(random.NextDouble() - 0.5f) * MathF.PI;
-                    pitch += (float)(random.NextDouble() - 0.5f) * 0.7f;
-                }
-
-                yaw += deltaYaw;
-                pitch += deltaPitch;
-                pitch = Math.Clamp(pitch, -0.5f, 0.5f);
-
-                direction.X = (float)(Math.Cos(pitch) * Math.Cos(yaw));
-                direction.Y = (float)Math.Sin(pitch);
-                direction.Z = (float)(Math.Cos(pitch) * Math.Sin(yaw));
-                direction = direction.Normalized();
-
-                // Salva o segmento com raio atual
-                list.Add(new WormSegment { Position = position, Direction = direction, Radius = radius });
-
-                // ====== Bifurcação ======
-                if (branchDepth < BranchRecursionDepth && branchesCreated < branchesLimit)
-                {
-                    if (random.NextDouble() < WormBranchChance)
-                    {
-                        float branchYawOffset = ((float)random.NextDouble() - 0.5f) * MathF.PI * 0.7f;
-                        float branchPitchOffset = ((float)random.NextDouble() - 0.5f) * 0.7f;
-
-                        float branchYaw = yaw + branchYawOffset;
-                        float branchPitch = pitch + branchPitchOffset;
-
-                        Vector3 branchDir;
-                        branchDir.X = (float)(Math.Cos(branchPitch) * Math.Cos(branchYaw));
-                        branchDir.Y = (float)Math.Sin(branchPitch);
-                        branchDir.Z = (float)(Math.Cos(branchPitch) * Math.Sin(branchYaw));
-                        branchDir = branchDir.Normalized();
-
-                        int branchSeed = seed ^ (i * 739391) ^ random.Next();
-                        int branchLength = (int)(count * (0.4 + 0.4 * random.NextDouble()));
-                        float branchCurve = curveAmount * (1f + BranchCurveBoost * (float)random.NextDouble());
-
-                        var branchSegments = GenerateWormSegments(
-                            branchLength, branchSeed, position, branchDir, stepSize, branchCurve, branchDepth + 1);
-
-                        list.AddRange(branchSegments);
-                        branchesCreated++;
-                    }
-                }
-
-                position += direction * stepSize;
-            }
-            return list;
-        }
-
-        // Dentro de World.cs, substitua também CarveWormInChunk por esta versão:
-        private void CarveWormInChunk(ChunkCache cache, Vector3i chunkMin, Vector3i chunkMax, WormSegment[] wormSegments)
-        {
-            // decide UMA vez por worm se pode romper a superfície
-            bool allowSurfaceBreak = EnableSurfaceCaveControl && SurfaceBreakChance > 0f
-                && _surfaceBreakRandom.NextDouble() < SurfaceBreakChance;
-
-            foreach (var seg in wormSegments)
-            {
-                var pos = seg.Position;
-                float radius = seg.Radius;
-                double radiusSq = radius * radius;
-
-                // limite de Y se não permitir romper
-                double maxAllowedY = allowSurfaceBreak
-                    ? double.MaxValue
-                    : GetSurfaceHeight(pos.X, pos.Z) + SurfaceYOffset - SurfaceMargin;
-
-                // bounding-box rápido
-                if (pos.X < chunkMin.X - radius || pos.X > chunkMax.X + radius) continue;
-                if (pos.Y < chunkMin.Y - radius || pos.Y > chunkMax.Y + radius) continue;
-                if (pos.Z < chunkMin.Z - radius || pos.Z > chunkMax.Z + radius) continue;
-
-                int minX = Math.Max((int)Math.Floor(pos.X - radius), chunkMin.X);
-                int maxX = Math.Min((int)Math.Ceiling(pos.X + radius), chunkMax.X);
-                int minY = Math.Max((int)Math.Floor(pos.Y - radius), chunkMin.Y);
-                int maxY = Math.Min((int)Math.Ceiling(pos.Y + radius), chunkMax.Y);
-                int minZ = Math.Max((int)Math.Floor(pos.Z - radius), chunkMin.Z);
-                int maxZ = Math.Min((int)Math.Ceiling(pos.Z + radius), chunkMax.Z);
-
-                for (int x = minX; x <= maxX; x++)
-                {
-                    for (int y = minY; y <= maxY; y++)
-                    {
-                        if (!allowSurfaceBreak && y > maxAllowedY) continue;
-
-                        for (int z = minZ; z <= maxZ; z++)
-                        {
-                            double dx = x + 0.5 - pos.X;
-                            double dy = y + 0.5 - pos.Y;
-                            double dz = z + 0.5 - pos.Z;
-
-                            if (dx * dx + dy * dy + dz * dz <= radiusSq)
-                                cache.SetBlockWithoutUpdate(x, y, z, 0);
-                        }
-                    }
-                }
-            }
         }
 
         public World()
@@ -597,6 +323,250 @@ namespace MazeEngine.Blocks
             }
         }
 
+        // ========== Geração de Worms procedural, SEM uso de memória ==========
+        // Função para gerar worms para uma região
+        private List<WormSegment[]> GenerateWormsForRegion(int regionX, int regionZ, int regionSeed)
+        {
+            var worms = new List<WormSegment[]>();
+            int seedBase = regionSeed ^ (regionX * 341873128712L).GetHashCode() ^ (regionZ * 132897987541L).GetHashCode();
+            var random = new Random(seedBase);
+
+            int wormCount = random.Next(MinWormsPerRegion, MaxWormsPerRegion + 1);
+            for (int i = 0; i < wormCount; i++)
+            {
+                int wormSeed = seedBase ^ (i * 10007);
+                float startX = regionX * CaveRegionSize + random.Next(0, CaveRegionSize);
+                float startY = random.Next(30, 80);
+                float startZ = regionZ * CaveRegionSize + random.Next(0, CaveRegionSize);
+
+                float angle = (float)(random.NextDouble() * Math.PI * 2);
+                Vector3 dir = new Vector3((float)Math.Cos(angle), (float)((random.NextDouble() - 0.5) * 0.4f), (float)Math.Sin(angle));
+
+                int wormLength = random.Next(WormMinLength, WormMaxLength + 1);
+
+                var worm = GenerateWormSegments(
+                    wormLength, wormSeed, new Vector3(startX, startY, startZ), dir, WormStep, WormCurve
+                ).ToArray();
+                worms.Add(worm);
+            }
+            return worms;
+        }
+
+        // Função que retorna todas os worms de todas regiões que tocam um chunk
+        private List<WormSegment[]> GetAffectingWorms(Vector3i chunkMin, Vector3i chunkMax)
+        {
+            int minRX = chunkMin.X / CaveRegionSize;
+            int maxRX = chunkMax.X / CaveRegionSize;
+            int minRZ = chunkMin.Z / CaveRegionSize;
+            int maxRZ = chunkMax.Z / CaveRegionSize;
+
+            var worms = new List<WormSegment[]>();
+            for (int rx = minRX; rx <= maxRX; rx++)
+                for (int rz = minRZ; rz <= maxRZ; rz++)
+                    worms.AddRange(GenerateWormsForRegion(rx, rz, seed));
+            return worms;
+        }
+
+        // Gera o caminho do worm (igual ao seu antigo)
+        private static List<WormSegment> GenerateWormSegments(
+            int count,
+            int seed,
+            Vector3 start,
+            Vector3 dir,
+            float stepSize,
+            float curveAmount,
+            int branchDepth = 0,
+            int maxBranches = -1)
+        {
+            var list = new List<WormSegment>();
+            var random = new Random(seed);
+            Vector3 position = start;
+            Vector3 direction = dir.Normalized();
+
+            float yaw = (float)Math.Atan2(direction.Z, direction.X);
+            float pitch = (float)Math.Asin(direction.Y);
+
+            int branchesCreated = 0;
+            int branchesLimit = (maxBranches == -1) ? MaxBranchesPerWorm : maxBranches;
+
+            // Mega room
+            bool inMegaRoom = false;
+            int megaRoomStart = -1, megaRoomEnd = -1, megaRoomLength = 0;
+            float megaRoomTargetRadius = DefaultWormRadius;
+            float defaultRadius = DefaultWormRadius;
+            float radius = DefaultWormRadius;
+
+            // Morte súbita
+            bool dying = false;
+            int deathStart = -1;
+
+            for (int i = 0; i < count; i++)
+            {
+                // Mega room: chance de começar
+                if (!inMegaRoom && random.NextDouble() < MegaRoomChance)
+                {
+                    inMegaRoom = true;
+                    megaRoomStart = i;
+                    megaRoomLength = random.Next(MegaRoomMinLength, MegaRoomMaxLength + 1);
+                    megaRoomEnd = megaRoomStart + megaRoomLength;
+                    megaRoomTargetRadius = (float)(MegaRoomMinRadius + (MegaRoomMaxRadius - MegaRoomMinRadius) * random.NextDouble());
+                }
+
+                // Suavização de raio (mega room)
+                if (inMegaRoom)
+                {
+                    int blendIn = Math.Min(i - megaRoomStart, MegaRoomBlendLength);
+                    int blendOut = Math.Min(megaRoomEnd - i, MegaRoomBlendLength);
+
+                    if (blendIn < MegaRoomBlendLength)
+                        radius = MathHelper.Lerp(defaultRadius, megaRoomTargetRadius, blendIn / (float)MegaRoomBlendLength);
+                    else if (blendOut < MegaRoomBlendLength)
+                        radius = MathHelper.Lerp(megaRoomTargetRadius, defaultRadius, 1f - (blendOut / (float)MegaRoomBlendLength));
+                    else
+                        radius = megaRoomTargetRadius;
+
+                    if (i >= megaRoomEnd)
+                    {
+                        inMegaRoom = false;
+                        radius = defaultRadius;
+                    }
+                }
+                else
+                {
+                    float targetRadius = defaultRadius + ((float)random.NextDouble() - 0.5f) * (WormRadiusVariation * 3);
+                    targetRadius = Math.Max(1.5f, targetRadius);
+                    float radiusSmoothFactor = 0.28f;
+                    radius = radius * (1 - radiusSmoothFactor) + targetRadius * radiusSmoothFactor;
+                }
+
+                // Morte súbita
+                if (!dying && i > MinWormDeathLength && random.NextDouble() < WormDeathChance)
+                {
+                    dying = true;
+                    deathStart = i;
+                }
+                if (dying)
+                {
+                    float t = (i - deathStart) / (float)WormDeathBlendLength;
+                    radius = MathHelper.Lerp(radius, 0f, t);
+                    if (t >= 1f)
+                        break; // encerra worm
+                }
+
+                // Variação suave do ângulo
+                float deltaYaw = ((float)random.NextDouble() - 0.5f) * curveAmount * 1.4f;
+                float deltaPitch = ((float)random.NextDouble() - 0.5f) * curveAmount * 0.35f;
+
+                // Punch chance
+                if (random.NextDouble() < WormPunchChance)
+                {
+                    float punch = (float)(random.NextDouble() - 0.5f) * curveAmount * WormPunchStrength;
+                    deltaYaw += punch;
+                    if (random.NextDouble() < 0.55)
+                        deltaPitch += (float)(random.NextDouble() - 0.5f) * curveAmount * 0.7f;
+                    else
+                        deltaPitch += (float)(random.NextDouble() - 0.5f) * curveAmount * 1.6f;
+                }
+
+                // Virada brusca rara
+                if (random.NextDouble() < 0.02)
+                {
+                    yaw += (float)(random.NextDouble() - 0.5f) * MathF.PI;
+                    pitch += (float)(random.NextDouble() - 0.5f) * 0.7f;
+                }
+
+                yaw += deltaYaw;
+                pitch += deltaPitch;
+                pitch = Math.Clamp(pitch, -0.5f, 0.5f);
+
+                direction.X = (float)(Math.Cos(pitch) * Math.Cos(yaw));
+                direction.Y = (float)Math.Sin(pitch);
+                direction.Z = (float)(Math.Cos(pitch) * Math.Sin(yaw));
+                direction = direction.Normalized();
+
+                list.Add(new WormSegment { Position = position, Direction = direction, Radius = radius });
+
+                // Bifurcação
+                if (branchDepth < BranchRecursionDepth && branchesCreated < branchesLimit)
+                {
+                    if (random.NextDouble() < WormBranchChance)
+                    {
+                        float branchYawOffset = ((float)random.NextDouble() - 0.5f) * MathF.PI * 0.7f;
+                        float branchPitchOffset = ((float)random.NextDouble() - 0.5f) * 0.7f;
+
+                        float branchYaw = yaw + branchYawOffset;
+                        float branchPitch = pitch + branchPitchOffset;
+
+                        Vector3 branchDir;
+                        branchDir.X = (float)(Math.Cos(branchPitch) * Math.Cos(branchYaw));
+                        branchDir.Y = (float)Math.Sin(branchPitch);
+                        branchDir.Z = (float)(Math.Cos(branchPitch) * Math.Sin(branchYaw));
+                        branchDir = branchDir.Normalized();
+
+                        int branchSeed = seed ^ (i * 739391) ^ random.Next();
+                        int branchLength = (int)(count * (0.4 + 0.4 * random.NextDouble()));
+                        float branchCurve = curveAmount * (1f + BranchCurveBoost * (float)random.NextDouble());
+
+                        var branchSegments = GenerateWormSegments(
+                            branchLength, branchSeed, position, branchDir, stepSize, branchCurve, branchDepth + 1);
+
+                        list.AddRange(branchSegments);
+                        branchesCreated++;
+                    }
+                }
+
+                position += direction * stepSize;
+            }
+            return list;
+        }
+
+        // Escava os worms no chunk
+        private void CarveWormInChunk(ChunkCache cache, Vector3i chunkMin, Vector3i chunkMax, WormSegment[] wormSegments)
+        {
+            bool allowSurfaceBreak = EnableSurfaceCaveControl && SurfaceBreakChance > 0f
+                && _surfaceBreakRandom.NextDouble() < SurfaceBreakChance;
+
+            foreach (var seg in wormSegments)
+            {
+                var pos = seg.Position;
+                float radius = seg.Radius;
+                double radiusSq = radius * radius;
+
+                double maxAllowedY = allowSurfaceBreak
+                    ? double.MaxValue
+                    : GetSurfaceHeight(pos.X, pos.Z) + SurfaceYOffset - SurfaceMargin;
+
+                if (pos.X < chunkMin.X - radius || pos.X > chunkMax.X + radius) continue;
+                if (pos.Y < chunkMin.Y - radius || pos.Y > chunkMax.Y + radius) continue;
+                if (pos.Z < chunkMin.Z - radius || pos.Z > chunkMax.Z + radius) continue;
+
+                int minX = Math.Max((int)Math.Floor(pos.X - radius), chunkMin.X);
+                int maxX = Math.Min((int)Math.Ceiling(pos.X + radius), chunkMax.X);
+                int minY = Math.Max((int)Math.Floor(pos.Y - radius), chunkMin.Y);
+                int maxY = Math.Min((int)Math.Ceiling(pos.Y + radius), chunkMax.Y);
+                int minZ = Math.Max((int)Math.Floor(pos.Z - radius), chunkMin.Z);
+                int maxZ = Math.Min((int)Math.Ceiling(pos.Z + radius), chunkMax.Z);
+
+                for (int x = minX; x <= maxX; x++)
+                {
+                    for (int y = minY; y <= maxY; y++)
+                    {
+                        if (!allowSurfaceBreak && y > maxAllowedY) continue;
+
+                        for (int z = minZ; z <= maxZ; z++)
+                        {
+                            double dx = x + 0.5 - pos.X;
+                            double dy = y + 0.5 - pos.Y;
+                            double dz = z + 0.5 - pos.Z;
+
+                            if (dx * dx + dy * dy + dz * dz <= radiusSq)
+                                cache.SetBlockWithoutUpdate(x, y, z, 0);
+                        }
+                    }
+                }
+            }
+        }
+
         private void LoadRegion(ChunkCache cache, Vector3i region, Vector3i worldMin, Vector3i worldMax)
         {
             // Calcula o “base chunk” da região
@@ -615,7 +585,6 @@ namespace MazeEngine.Blocks
                         var cp = baseChunk + new Vector3i(cx, cy, cz);
                         try
                         {
-                            // se existe e carrega, adiciona ao cache
                             if (!WorldSerializer.SafeLoadChunk(cache, cp))
                             {
                                 allLoaded = false;
@@ -625,7 +594,6 @@ namespace MazeEngine.Blocks
                         catch (EndOfStreamException eof)
                         {
                             Logger.Info($"Chunk {cp} corrompido (EOF), deletando arquivo e regen.: {eof.Message}");
-                            // deleta o .chunks/<x y z>
                             var file = Path.Combine(WorldSerializer.WorldFolder,
                                                     WorldSerializer.ChunksFolder,
                                                     $"{cp.X} {cp.Y} {cp.Z}");
@@ -639,13 +607,11 @@ namespace MazeEngine.Blocks
 
             if (allLoaded)
             {
-                // região inteira veio do disco
                 lock (_lockGeneratedRegions) _generatedRegions.Add(region);
                 lock (_regionsReadyToAdd) _regionsReadyToAdd.Enqueue(cache);
                 return;
             }
 
-            // Senão, geramos **tudo** do zero
             lock (_lockGeneratedRegions)
                 _generatedRegions.Add(region);
 
@@ -692,19 +658,8 @@ namespace MazeEngine.Blocks
                                                     by + Chunk.Size - 1,
                                                     bz + Chunk.Size - 1);
 
-                        int minRX = worldMin.X / CaveRegionSize;
-                        int maxRX = worldMax.X / CaveRegionSize;
-                        int minRZ = worldMin.Z / CaveRegionSize;
-                        int maxRZ = worldMax.Z / CaveRegionSize;
-
-                        for (int rx = minRX; rx <= maxRX; rx++)
-                            for (int rz = minRZ; rz <= maxRZ; rz++)
-                                EnsureRegionWormsLoaded(rx, rz);
-
-                        var affecting = new List<WormSegment[]>();
-                        for (int rx = minRX; rx <= maxRX; rx++)
-                            for (int rz = minRZ; rz <= maxRZ; rz++)
-                                affecting.AddRange(_allRegionWorms[(rx, rz)]);
+                        // Procedural: pega worms que podem afetar esse chunk!
+                        var affecting = GetAffectingWorms(chunkMin, chunkMax);
 
                         foreach (var w in affecting)
                             CarveWormInChunk(cache, chunkMin, chunkMax, w);
@@ -743,7 +698,6 @@ namespace MazeEngine.Blocks
 
                 ThreadPool.QueueUserWorkItem(_ =>
                 {
-                    // salva cada chunk da região
                     var baseChunk = ChunkInWorld(rg * RegionSize);
                     for (int cx = 0; cx < ChunksPerRegion; cx++)
                         for (int cy = 0; cy < ChunksPerRegion; cy++)
